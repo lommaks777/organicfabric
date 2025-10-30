@@ -1,0 +1,36 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Job {
+  id            String   @id @default(cuid())
+  fileId        String
+  revisionId    String
+  status        String   // NEW, CLAIMED, IMAGES_PICKED, POST_RENDERED, WP_DRAFTED, DONE, ERROR
+  errorCode     String?
+  errorMessage  String?
+  startedAt     DateTime @default(now())
+  finishedAt    DateTime?
+  postId        Int?
+  postEditLink  String?
+  artifacts     Artifact[]
+
+  @@unique([fileId, revisionId])
+}
+
+model Artifact {
+  id        String   @id @default(cuid())
+  jobId     String
+  kind      String   // RAW_TEXT, HTML, WIDGET_DECISION, IMAGE_META
+  content   Json
+  createdAt DateTime @default(now())
+  Job       Job      @relation(fields: [jobId], references: [id])
+}
