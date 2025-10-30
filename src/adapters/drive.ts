@@ -56,7 +56,7 @@ export async function listNewFiles(): Promise<DriveFile[]> {
 
   const files = response.data.files || [];
   
-  return files.map(file => ({
+  return files.map((file: any) => ({
     id: file.id!,
     name: file.name!,
     modifiedTime: file.modifiedTime!,
@@ -75,14 +75,46 @@ export async function renameFile(fileId: string, newName: string): Promise<void>
   });
 }
 
-export async function getFileContent(fileId: string): Promise<Buffer> {
-  // TODO: Implement file content retrieval
-  console.log(`Getting content for file ${fileId}`);
-  return Buffer.from('');
+export async function getFileContent(fileId: string, mimeType: string): Promise<Buffer> {
+  const drive = getDriveClient();
+
+  // Determine if this is a Google Workspace document
+  const isGoogleDoc = mimeType.startsWith('application/vnd.google-apps.');
+
+  if (isGoogleDoc) {
+    // Export Google Docs to HTML format for better structure preservation
+    const exportMimeType = 'text/html';
+    const response = await drive.files.export(
+      {
+        fileId,
+        mimeType: exportMimeType,
+      },
+      { responseType: 'arraybuffer' }
+    );
+    return Buffer.from(response.data as ArrayBuffer);
+  } else {
+    // Download binary files (like .docx) as media
+    const response = await drive.files.get(
+      {
+        fileId,
+        alt: 'media',
+      },
+      { responseType: 'arraybuffer' }
+    );
+    return Buffer.from(response.data as ArrayBuffer);
+  }
 }
 
-export async function getFileMetadata(fileId: string): Promise<any> {
-  // TODO: Implement file metadata retrieval
-  console.log(`Getting metadata for file ${fileId}`);
-  return null;
+export async function getFileMetadata(fileId: string): Promise<{ mimeType: string; name: string }> {
+  const drive = getDriveClient();
+  
+  const response = await drive.files.get({
+    fileId,
+    fields: 'mimeType, name',
+  });
+
+  return {
+    mimeType: response.data.mimeType || 'application/octet-stream',
+    name: response.data.name || 'unknown',
+  };
 }

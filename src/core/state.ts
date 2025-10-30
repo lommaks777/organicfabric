@@ -70,3 +70,19 @@ export async function getJob(jobId: string): Promise<any> {
 
   return job;
 }
+
+export async function createArtifact(
+  jobId: string,
+  kind: string,
+  content: any
+): Promise<any> {
+  const artifact = await prisma.artifact.create({
+    data: {
+      jobId,
+      kind,
+      content,
+    },
+  });
+
+  return artifact;
+}
