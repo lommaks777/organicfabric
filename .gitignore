@@ -15,6 +15,12 @@ build/
 .env.test.local
 .env.production.local
 
+# Google Cloud Service Account
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+
 # Vercel
 .vercel/
 

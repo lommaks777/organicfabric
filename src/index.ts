@@ -4,16 +4,51 @@
  */
 
 import 'dotenv/config';
+import express from 'express';
+import type { Request, Response } from 'express';
 import { logger } from './core/logger.js';
+import pollDriveHandler from './api/cron/poll-drive.js';
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.json());
+
+// Health check endpoint
+app.get('/', (_req: Request, res: Response) => {
+  res.json({ status: 'ok', message: 'OrganicFabric API is running' });
+});
+
+// Cron endpoint
+app.get('/api/cron/poll-drive', async (req: Request, res: Response) => {
+  try {
+    // Адаптируем Express request/response к формату Next.js API
+    const adaptedReq = req as any;
+    const adaptedRes = {
+      ...res,
+      status: (code: number) => {
+        res.status(code);
+        return adaptedRes;
+      },
+      json: (data: any) => {
+        res.json(data);
+      },
+    };
+    
+    await pollDriveHandler(adaptedReq, adaptedRes as any);
+  } catch (error) {
+    logger.error('Error in poll-drive endpoint:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 async function main() {
   logger.info('Application starting...');
 
-  // TODO: Add application initialization logic here
-  // For example:
-  // - Start background workers
-  // - Initialize services
-  // - Set up scheduled tasks
+  app.listen(PORT, () => {
+    logger.info(`Server is running on http://localhost:${PORT}`);
+    logger.info(`Cron endpoint: http://localhost:${PORT}/api/cron/poll-drive`);
+  });
 
   logger.info('Application initialized successfully');
 }
