@@ -88,6 +88,7 @@ export async function generateImages(params: GenerateImagesParams): Promise<Gene
         aspectRatio: aspectRatio,
         safetyFilterLevel: 'block_some',
         personGeneration: 'allow_adult',
+        negativePrompt: 'blurry, low quality, deformed hands, extra fingers, mutated hands, bad anatomy, ugly, disfigured'
       };
       
       const instance = {
@@ -111,6 +112,9 @@ export async function generateImages(params: GenerateImagesParams): Promise<Gene
             },
             safetyFilterLevel: {
               stringValue: parametersValue.safetyFilterLevel,
+            },
+            negativePrompt: {
+              stringValue: parametersValue.negativePrompt,
             },
             personGeneration: {
               stringValue: parametersValue.personGeneration,

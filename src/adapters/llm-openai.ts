@@ -69,7 +69,8 @@ Each scene should be:
 - 1-2 sentences long
 - Concrete and visual (not abstract concepts)
 - Relevant to the article content
-- Suitable for photorealistic or artistic image generation
+- Depict people of SLAVIC or EASTERN EUROPEAN appearance.
+- Style: photorealistic, high detail, cinematic lighting.
 
 Return your response as a JSON array of strings.`;
   
