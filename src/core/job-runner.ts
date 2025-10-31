@@ -13,196 +13,98 @@ import { sanitizeHtml } from '../pipelines/sanitize.js';
 import { insertWidgets } from '../pipelines/widgets.js';
 
 export async function runJob(jobId: string): Promise<void> {
-  logger.info(`Starting job execution: ${jobId}`);
+  logger.info(`[Job ${jobId}] Starting job execution.`);
+  let job;
 
   try {
-    // 1. Retrieve job data from database
-    logger.info(`Retrieving job data for: ${jobId}`);
-    const job = await state.getJob(jobId);
-    logger.info(`Job retrieved successfully. File ID: ${job.fileId}, Status: ${job.status}`);
-
-    // 2. Get file metadata to determine MIME type
-    logger.info(`Retrieving file metadata for: ${job.fileId}`);
+    // === Этап 1: Инициализация и парсинг (критически важный) ===
+    job = await state.getJob(jobId);
     const metadata = await drive.getFileMetadata(job.fileId);
-    logger.info(`File metadata retrieved. Name: ${metadata.name}, MIME type: ${metadata.mimeType}`);
-
-    // 3. Download file content
-    logger.info(`Downloading file content for: ${job.fileId}`);
     const fileBuffer = await drive.getFileContent(job.fileId, metadata.mimeType);
-    logger.info(`File content downloaded. Buffer size: ${fileBuffer.length} bytes`);
-
-    // 4. Parse document content
-    // Note: Google Docs are exported as HTML, so we use text/html for parsing
-    const parseAs = metadata.mimeType.startsWith('application/vnd.google-apps.') 
-      ? 'text/html' 
-      : metadata.mimeType;
-    logger.info(`Parsing document as type: ${parseAs} (original: ${metadata.mimeType})`);
-    const parsedDoc = await parseDocument(fileBuffer, parseAs);
-    logger.info(`Document parsed successfully. Text length: ${parsedDoc.text.length}, HTML length: ${parsedDoc.rawHtml.length}`);
-
-    // 5. Store parsed content as artifacts
-    logger.info(`Storing RAW_TEXT artifact for job: ${jobId}`);
-    await state.createArtifact(jobId, 'RAW_TEXT', { text: parsedDoc.text });
-    
-    logger.info(`Storing HTML artifact for job: ${jobId}`);
-    await state.createArtifact(jobId, 'HTML', { html: parsedDoc.rawHtml });
-    
-    logger.info(`Artifacts stored successfully for job: ${jobId}`);
-
-    // 6. Update job status to POST_RENDERED
-    logger.info(`Updating job status to POST_RENDERED for job: ${jobId}`);
+    const parseMimeType = metadata.mimeType.startsWith('application/vnd.google-apps.') ? 'text/html' : metadata.mimeType;
+    const parsedDoc = await parseDocument(fileBuffer, parseMimeType);
+    await state.createArtifact(jobId, 'RAW_CONTENT', { text: parsedDoc.text, html: parsedDoc.rawHtml });
+    logger.info(`[Job ${jobId}] !!! USING NEW JOB RUNNER !!! Created RAW_CONTENT artifact`);
     await state.updateJobStatus(jobId, 'POST_RENDERED');
-    logger.info(`Job status updated to POST_RENDERED`);
+    logger.info(`[Job ${jobId}] Step 1/5: Document parsed successfully.`);
 
-    // 7. Generate and upload images
-    logger.info(`Generating and uploading images for job: ${jobId}`);
-    const imageCount = parseInt(process.env.IMAGE_COUNT || '3', 10);
+    // === Этап 2: Генерация изображений (опциональный) ===
     let uploadedImages: Array<{ url: string; alt: string; wpMediaId: number; prompt?: string }> = [];
-    let featuredMediaId: number | undefined;
-    
     try {
+      const imageCount = parseInt(process.env.IMAGE_COUNT || '3', 10);
       uploadedImages = await generateAndUploadImages(jobId, parsedDoc.text, imageCount);
-      logger.info(`Successfully generated and uploaded ${uploadedImages.length} images`);
-      
-      // Set first image as featured image
-      if (uploadedImages.length > 0) {
-        featuredMediaId = uploadedImages[0].wpMediaId;
-        logger.info(`Setting featured image to media ID: ${featuredMediaId}`);
-      }
-      
-      // Store image metadata as artifact
-      await state.createArtifact(jobId, 'IMAGE_META', {
-        imageCount: uploadedImages.length,
-        imageIds: uploadedImages.map(img => img.wpMediaId),
-        images: uploadedImages,
-      });
-      
-      // Update job status to IMAGES_PICKED
+      await state.createArtifact(jobId, 'IMAGE_META', { images: uploadedImages });
       await state.updateJobStatus(jobId, 'IMAGES_PICKED');
-      logger.info(`Job status updated to IMAGES_PICKED`);
-      
+      logger.info(`[Job ${jobId}] Step 2/5: Generated and uploaded ${uploadedImages.length} images.`);
     } catch (imageError) {
-      logger.error(`Error during image generation for job ${jobId}:`, imageError);
-      logger.warn(`Continuing with post creation without images`);
-      // Don't fail the job, just continue without images
+      logger.error(`[Job ${jobId}] Image generation failed, but continuing.`, imageError);
     }
 
-    // 8. Format article HTML with AI
-    logger.info(`Starting content formatting stage for job: ${jobId}`);
-    let formattedHtml: string;
-    
+    // === Этап 3: Форматирование контента (основной + fallback) ===
+    let workingHtml = parsedDoc.rawHtml; // Начинаем с HTML, полученного из парсера
     try {
-      // Transform uploadedImages to format expected by formatter
-      const imageData = uploadedImages.map(img => ({
-        source_url: img.url,
-        prompt: img.prompt || img.alt,
-      }));
-      
-      formattedHtml = await formatArticleHtml(parsedDoc.text, imageData);
-      logger.info(`Content formatted successfully, HTML length: ${formattedHtml.length} bytes`);
-      
+      const imageDataForFormatter = uploadedImages.map(img => ({ source_url: img.url, prompt: img.prompt || '' }));
+      const formattedHtml = await formatArticleHtml(parsedDoc.text, imageDataForFormatter);
+      // Проверяем, что AI вернул непустой результат
+      if (formattedHtml && formattedHtml.length > 100) {
+        workingHtml = formattedHtml;
+        logger.info(`[Job ${jobId}] Step 3/5: Content formatted by AI successfully.`);
+      } else {
+        logger.warn(`[Job ${jobId}] AI returned empty or short content. Using raw HTML as fallback.`);
+      }
     } catch (formatError) {
-      logger.error(`Error during content formatting for job ${jobId}:`, formatError);
-      logger.warn(`Falling back to raw text content`);
-      // Fallback to raw text if formatting fails
-      formattedHtml = `<p>${parsedDoc.text.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
+      logger.error(`[Job ${jobId}] Content formatting by AI failed, using raw HTML.`, formatError);
     }
-
-    // 9. Sanitize HTML for security
-    logger.info(`Starting HTML sanitization stage for job: ${jobId}`);
-    let safeHtml: string;
     
+    // === Этап 4: Вставка элементов (санитайзер, виджеты) ===
+    let finalHtml = workingHtml;
     try {
-      safeHtml = sanitizeHtml(formattedHtml);
-      logger.info(`HTML sanitized and ready for WordPress`);
-      
-    } catch (sanitizeError) {
-      logger.error(`Error during HTML sanitization for job ${jobId}:`, sanitizeError);
-      logger.warn(`Using formatted but unsanitized HTML`);
-      // Use formatted HTML even if sanitization fails
-      safeHtml = formattedHtml;
-    }
-
-    // 10. Insert GetCourse widgets based on content analysis
-    logger.info(`[Job ${jobId}] Inserting widgets...`);
-    let finalHtml: string;
-    
-    try {
+      // 4.1 Санитайзер (критически важно)
+      const safeHtml = sanitizeHtml(finalHtml);
+      // 4.2 Вставка виджетов
       finalHtml = await insertWidgets(safeHtml, parsedDoc.text);
-      logger.info(`[Job ${jobId}] Widgets inserted.`);
-      
-    } catch (widgetError) {
-      logger.error(`Error during widget insertion for job ${jobId}:`, widgetError);
-      logger.warn(`Continuing without widgets`);
-      // Use sanitized HTML even if widget insertion fails
-      finalHtml = safeHtml;
+      logger.info(`[Job ${jobId}] Step 4/5: Sanitization and widget insertion complete.`);
+    } catch (insertionError) {
+        logger.error(`[Job ${jobId}] Sanitization or widget insertion failed. Using pre-insertion HTML.`, insertionError);
+        finalHtml = workingHtml; // Откат к HTML до вставки
     }
 
-    // 11. Create WordPress draft post with formatted content
-    logger.info(`Creating WordPress draft post for job: ${jobId}`);
-    logger.info(`Final HTML length: ${finalHtml.length} chars`);
-    logger.info(`Final HTML preview (first 500 chars): ${finalHtml.substring(0, 500)}`);
-    const postTitle = `[AUTO] ${metadata.name}`;
-    
+    // ЗАЩИТА: Если после всех шагов HTML пустой, используем исходный текст как последнюю меру.
+    if (!finalHtml || finalHtml.trim().length === 0) {
+        logger.error(`[Job ${jobId}] CRITICAL: Final HTML is empty! Falling back to raw parsed text.`);
+        finalHtml = `<p>${parsedDoc.text.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
+    }
+
+    // === Этап 5: Публикация в WordPress ===
+    const featuredMediaId = uploadedImages.length > 0 ? uploadedImages[0].wpMediaId : undefined;
+    const postTitle = `[AUTO] ${metadata.name.replace(/-process$/, '')}`;
     const post = await wordpress.createPost({
       title: postTitle,
       content: finalHtml,
       status: 'draft',
       featuredMedia: featuredMediaId,
     });
-    logger.info(`WordPress draft created successfully. Post ID: ${post.id}`);
-    
-    // Store final HTML as artifact for debugging
-    await state.createArtifact(jobId, 'FINAL_HTML', { html: finalHtml });
+    logger.info(`[Job ${jobId}] Step 5/5: WordPress draft created. Post ID: ${post.id}`);
 
-    // 12. Update job status to WP_DRAFTED with post metadata
-    // 12. Update job status to WP_DRAFTED with post metadata
-    logger.info(`Updating job status to WP_DRAFTED for job: ${jobId}`);
-    await state.updateJobStatus(job.id, 'WP_DRAFTED', {
-      postId: post.id,
-      postEditLink: post.editLink,
-    });
-    logger.info(`Job status updated to WP_DRAFTED. Post ID: ${post.id}, Edit Link: ${post.editLink}, Featured Image ID: ${featuredMediaId || 'none'}`);
-
-    // 13. Rename file to indicate completion
-    // 13. Rename file to indicate completion
-    logger.info(`Renaming file to done state for job: ${jobId}`);
-    const doneName = `${metadata.name}-done`;
+    // === Завершение ===
+    await state.updateJobStatus(job.id, 'WP_DRAFTED', { postId: post.id, postEditLink: post.editLink });
+    const doneName = `${metadata.name.replace(/-process$/, '')}-done`;
     await drive.renameFile(job.fileId, doneName);
-    logger.info(`File renamed to: ${doneName}`);
-
-    // 14. Update job status to DONE
-    logger.info(`Finalizing job status to DONE for job: ${jobId}`);
     await state.updateJobStatus(job.id, 'DONE');
-    logger.info(`Job ${jobId} completed successfully.`);
+    logger.info(`[Job ${jobId}] Job completed successfully.`);
 
   } catch (error) {
-    // Error handling workflow
-    logger.error(`Error during job execution for job ${jobId}:`, error);
-    
-    try {
-      // Update job status to ERROR
-      await state.updateJobStatus(jobId, 'ERROR', {
-        errorMessage: error instanceof Error ? error.message : 'Unknown error',
-      });
-      logger.info(`Job status updated to ERROR for job: ${jobId}`);
-
-      // Retrieve job to get file ID for renaming
-      const job = await state.getJob(jobId);
-      
-      // Get file metadata for proper renaming
-      const metadata = await drive.getFileMetadata(job.fileId);
-      
-      // Rename file to indicate error
-      const errorName = `${metadata.name}-error`;
-      await drive.renameFile(job.fileId, errorName);
-      logger.info(`File renamed to error state: ${errorName}`);
-      
-    } catch (cleanupError) {
-      logger.error(`Error during cleanup for job ${jobId}:`, cleanupError);
+    logger.error(`[Job ${jobId}] CRITICAL FAILURE in job execution.`, error);
+    if (job) {
+      try {
+        const jobData = await state.getJob(job.id);
+        const metadata = await drive.getFileMetadata(jobData.fileId);
+        const errorName = `${metadata.name.replace(/-process$/, '')}-error`;
+        await drive.renameFile(jobData.fileId, errorName);
+        await state.updateJobStatus(job.id, 'ERROR', { errorMessage: error instanceof Error ? error.message : 'Unknown error' });
+      } catch (cleanupError) {
+        logger.error(`[Job ${jobId}] Failed to perform error cleanup.`, cleanupError);
+      }
     }
-
-    // Re-throw original error
-    throw error;
   }
 }
