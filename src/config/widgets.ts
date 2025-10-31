@@ -1,28 +1,22 @@
 /**
- * Widget Configuration - Widget definitions and templates
+ * Widget Configuration - GetCourse widget definitions
  */
 
-interface WidgetDefinition {
-  name: string;
+export interface WidgetDefinition {
+  id: string;
   type: string;
-  template: string;
-  position: 'top' | 'bottom' | 'middle' | number;
-  config?: Record<string, any>;
+  title: string;
+  topics: string[];
+  embed_html: string;
+  default_placement: {
+    strategy: string;
+    index?: number;
+  };
+  position: 'top' | 'bottom';
+  __source__?: {
+    sheet: string;
+  };
 }
 
-// TODO: Add widget definitions here
-export const widgets: WidgetDefinition[] = [];
-
-// Example widget definition (commented out):
-// export const widgets: WidgetDefinition[] = [
-//   {
-//     name: 'call-to-action',
-//     type: 'shortcode',
-//     template: '[cta button_text="{{buttonText}}" link="{{link}}"]',
-//     position: 'bottom',
-//     config: {
-//       buttonText: 'Learn More',
-//       link: '#',
-//     },
-//   },
-// ];
+// Widget definitions are imported from widgets.json
+// This file exports the type definition for TypeScript type checking

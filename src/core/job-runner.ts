@@ -10,6 +10,7 @@ import { parseDocument } from '../pipelines/parse-input.js';
 import { generateAndUploadImages } from '../pipelines/image-pick.js';
 import { formatArticleHtml } from '../pipelines/format-content.js';
 import { sanitizeHtml } from '../pipelines/sanitize.js';
+import { insertWidgets } from '../pipelines/widgets.js';
 
 export async function runJob(jobId: string): Promise<void> {
   logger.info(`Starting job execution: ${jobId}`);
@@ -122,20 +123,40 @@ export async function runJob(jobId: string): Promise<void> {
       safeHtml = formattedHtml;
     }
 
-    // 10. Create WordPress draft post with formatted content
+    // 10. Insert GetCourse widgets based on content analysis
+    logger.info(`[Job ${jobId}] Inserting widgets...`);
+    let finalHtml: string;
+    
+    try {
+      finalHtml = await insertWidgets(safeHtml, parsedDoc.text);
+      logger.info(`[Job ${jobId}] Widgets inserted.`);
+      
+    } catch (widgetError) {
+      logger.error(`Error during widget insertion for job ${jobId}:`, widgetError);
+      logger.warn(`Continuing without widgets`);
+      // Use sanitized HTML even if widget insertion fails
+      finalHtml = safeHtml;
+    }
+
+    // 11. Create WordPress draft post with formatted content
     logger.info(`Creating WordPress draft post for job: ${jobId}`);
-    logger.info(`Creating WordPress post with formatted content`);
+    logger.info(`Final HTML length: ${finalHtml.length} chars`);
+    logger.info(`Final HTML preview (first 500 chars): ${finalHtml.substring(0, 500)}`);
     const postTitle = `[AUTO] ${metadata.name}`;
     
     const post = await wordpress.createPost({
       title: postTitle,
-      content: safeHtml,
+      content: finalHtml,
       status: 'draft',
       featuredMedia: featuredMediaId,
     });
     logger.info(`WordPress draft created successfully. Post ID: ${post.id}`);
+    
+    // Store final HTML as artifact for debugging
+    await state.createArtifact(jobId, 'FINAL_HTML', { html: finalHtml });
 
-    // 11. Update job status to WP_DRAFTED with post metadata
+    // 12. Update job status to WP_DRAFTED with post metadata
+    // 12. Update job status to WP_DRAFTED with post metadata
     logger.info(`Updating job status to WP_DRAFTED for job: ${jobId}`);
     await state.updateJobStatus(job.id, 'WP_DRAFTED', {
       postId: post.id,
@@ -143,13 +164,14 @@ export async function runJob(jobId: string): Promise<void> {
     });
     logger.info(`Job status updated to WP_DRAFTED. Post ID: ${post.id}, Edit Link: ${post.editLink}, Featured Image ID: ${featuredMediaId || 'none'}`);
 
-    // 12. Rename file to indicate completion
+    // 13. Rename file to indicate completion
+    // 13. Rename file to indicate completion
     logger.info(`Renaming file to done state for job: ${jobId}`);
     const doneName = `${metadata.name}-done`;
     await drive.renameFile(job.fileId, doneName);
     logger.info(`File renamed to: ${doneName}`);
 
-    // 13. Update job status to DONE
+    // 14. Update job status to DONE
     logger.info(`Finalizing job status to DONE for job: ${jobId}`);
     await state.updateJobStatus(job.id, 'DONE');
     logger.info(`Job ${jobId} completed successfully.`);

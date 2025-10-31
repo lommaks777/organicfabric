@@ -162,3 +162,100 @@ export async function generatePrompt(_context: string, type: string): Promise<st
   console.log(`Generating ${type} prompt for context`);
   return '';
 }
+
+/**
+ * Extract article tags using OpenAI for widget matching
+ * Analyzes article content and returns 5-7 semantic topic tags in Russian
+ */
+export async function extractArticleTags(articleText: string): Promise<string[]> {
+  logger.info('Extracting article tags for widget matching');
+  
+  // Validate input
+  if (!articleText || articleText.trim().length < 100) {
+    throw new Error('Article text too short for tag extraction (minimum 100 characters)');
+  }
+  
+  const client = getOpenAIClient();
+  
+  const systemPrompt = `Ты эксперт-аналитик контента в области массажа и здоровья.
+Твоя задача - проанализировать текст статьи и выделить основные темы.
+Верни 5-7 ключевых тегов на русском языке, которые точно описывают содержание.
+Используй конкретные термины, например: "массаж лица", "лимфодренаж", "остеохондроз", "самомассаж".
+Верни ответ в виде чистого JSON-массива строк, без дополнительных полей.`;
+  
+  const userPrompt = `Проанализируй этот текст статьи о массаже и здоровье. Выдели 5-7 основных тем (тегов) на русском языке:
+
+${truncateText(articleText, 700)}
+
+Верни ответ в формате: {"tags": ["тег1", "тег2", ...]}`;
+  
+  try {
+    const response = await client.chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+    });
+    
+    const content = response.choices[0]?.message?.content;
+    
+    if (!content) {
+      throw new Error('OpenAI returned empty response');
+    }
+    
+    logger.info('Received tag extraction response from OpenAI');
+    
+    // Parse JSON response
+    const parsed = JSON.parse(content);
+    
+    // Handle different possible JSON structures
+    let tags: string[];
+    if (Array.isArray(parsed)) {
+      tags = parsed;
+    } else if (parsed.tags && Array.isArray(parsed.tags)) {
+      tags = parsed.tags;
+    } else if (parsed.topics && Array.isArray(parsed.topics)) {
+      tags = parsed.topics;
+    } else {
+      // Try to extract first array found in the object
+      const firstArray = Object.values(parsed).find(val => Array.isArray(val));
+      if (firstArray && Array.isArray(firstArray)) {
+        tags = firstArray;
+      } else {
+        throw new Error('Unable to extract tags array from OpenAI response');
+      }
+    }
+    
+    // Validate tags
+    if (!tags || tags.length === 0) {
+      throw new Error('OpenAI returned empty tags array');
+    }
+    
+    // Return 5-7 tags
+    const finalTags = tags.slice(0, 7);
+    
+    logger.info(`Successfully extracted ${finalTags.length} article tags`);
+    finalTags.forEach((tag, idx) => {
+      logger.info(`Tag ${idx + 1}: ${tag}`);
+    });
+    
+    return finalTags;
+    
+  } catch (error) {
+    logger.error('Error extracting article tags with OpenAI:', error);
+    
+    if (error instanceof Error) {
+      if (error.message.includes('rate_limit')) {
+        throw new Error('OpenAI rate limit exceeded. Please try again later.');
+      }
+      if (error.message.includes('authentication')) {
+        throw new Error('OpenAI authentication failed. Check OPENAI_API_KEY.');
+      }
+    }
+    
+    throw error;
+  }
+}
