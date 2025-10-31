@@ -23,7 +23,7 @@ function getAuth() {
   const credentials = JSON.parse(serviceAccountJson);
   const auth = new google.auth.GoogleAuth({
     credentials,
-    scopes: ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/drive.metadata'],
+    scopes: ['https://www.googleapis.com/auth/drive'],
   });
 
   return auth;

@@ -23,16 +23,19 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google-cloud/aiplatform": "^5.12.0",
     "@prisma/client": "^5.22.0",
     "@types/express": "^5.0.5",
     "axios": "^1.7.7",
     "dompurify": "^3.1.7",
     "dotenv": "^16.4.5",
     "express": "^5.1.0",
+    "form-data": "^4.0.4",
     "googleapis": "^144.0.0",
     "handlebars": "^4.7.8",
     "jsdom": "^25.0.1",
-    "mammoth": "^1.8.0"
+    "mammoth": "^1.8.0",
+    "openai": "^6.7.0"
   },
   "devDependencies": {
     "@types/dompurify": "^3.0.5",
