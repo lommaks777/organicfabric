@@ -8,6 +8,8 @@ import * as state from './state.js';
 import { logger } from './logger.js';
 import { parseDocument } from '../pipelines/parse-input.js';
 import { generateAndUploadImages } from '../pipelines/image-pick.js';
+import { formatArticleHtml } from '../pipelines/format-content.js';
+import { sanitizeHtml } from '../pipelines/sanitize.js';
 
 export async function runJob(jobId: string): Promise<void> {
   logger.info(`Starting job execution: ${jobId}`);
@@ -84,20 +86,56 @@ export async function runJob(jobId: string): Promise<void> {
       // Don't fail the job, just continue without images
     }
 
-    // 8. Create WordPress draft post with parsed content
+    // 8. Format article HTML with AI
+    logger.info(`Starting content formatting stage for job: ${jobId}`);
+    let formattedHtml: string;
+    
+    try {
+      // Transform uploadedImages to format expected by formatter
+      const imageData = uploadedImages.map(img => ({
+        source_url: img.url,
+        prompt: img.prompt || img.alt,
+      }));
+      
+      formattedHtml = await formatArticleHtml(parsedDoc.text, imageData);
+      logger.info(`Content formatted successfully, HTML length: ${formattedHtml.length} bytes`);
+      
+    } catch (formatError) {
+      logger.error(`Error during content formatting for job ${jobId}:`, formatError);
+      logger.warn(`Falling back to raw text content`);
+      // Fallback to raw text if formatting fails
+      formattedHtml = `<p>${parsedDoc.text.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
+    }
+
+    // 9. Sanitize HTML for security
+    logger.info(`Starting HTML sanitization stage for job: ${jobId}`);
+    let safeHtml: string;
+    
+    try {
+      safeHtml = sanitizeHtml(formattedHtml);
+      logger.info(`HTML sanitized and ready for WordPress`);
+      
+    } catch (sanitizeError) {
+      logger.error(`Error during HTML sanitization for job ${jobId}:`, sanitizeError);
+      logger.warn(`Using formatted but unsanitized HTML`);
+      // Use formatted HTML even if sanitization fails
+      safeHtml = formattedHtml;
+    }
+
+    // 10. Create WordPress draft post with formatted content
     logger.info(`Creating WordPress draft post for job: ${jobId}`);
+    logger.info(`Creating WordPress post with formatted content`);
     const postTitle = `[AUTO] ${metadata.name}`;
-    const postContent = parsedDoc.text;
     
     const post = await wordpress.createPost({
       title: postTitle,
-      content: postContent,
+      content: safeHtml,
       status: 'draft',
       featuredMedia: featuredMediaId,
     });
     logger.info(`WordPress draft created successfully. Post ID: ${post.id}`);
 
-    // 9. Update job status to WP_DRAFTED with post metadata
+    // 11. Update job status to WP_DRAFTED with post metadata
     logger.info(`Updating job status to WP_DRAFTED for job: ${jobId}`);
     await state.updateJobStatus(job.id, 'WP_DRAFTED', {
       postId: post.id,
@@ -105,13 +143,13 @@ export async function runJob(jobId: string): Promise<void> {
     });
     logger.info(`Job status updated to WP_DRAFTED. Post ID: ${post.id}, Edit Link: ${post.editLink}, Featured Image ID: ${featuredMediaId || 'none'}`);
 
-    // 10. Rename file to indicate completion
+    // 12. Rename file to indicate completion
     logger.info(`Renaming file to done state for job: ${jobId}`);
     const doneName = `${metadata.name}-done`;
     await drive.renameFile(job.fileId, doneName);
     logger.info(`File renamed to: ${doneName}`);
 
-    // 11. Update job status to DONE
+    // 13. Update job status to DONE
     logger.info(`Finalizing job status to DONE for job: ${jobId}`);
     await state.updateJobStatus(job.id, 'DONE');
     logger.info(`Job ${jobId} completed successfully.`);

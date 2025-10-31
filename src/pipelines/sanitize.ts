@@ -4,6 +4,7 @@
 
 import DOMPurify from 'dompurify';
 import { JSDOM } from 'jsdom';
+import { logger } from '../core/logger.js';
 
 // Create a DOMPurify instance for Node.js
 const window = new JSDOM('').window;
@@ -58,14 +59,69 @@ const WORDPRESS_CONFIG = {
     'rel',
     'data-*',
   ],
+  ADD_ATTR: ['target', 'rel'],
 };
 
-export function sanitizeHtml(dirtyHtml: string): string {
-  // TODO: Implement HTML sanitization with DOMPurify
-  console.log('Sanitizing HTML content');
+// Track external links processed
+let externalLinksCount = 0;
 
-  const clean = purify.sanitize(dirtyHtml, WORDPRESS_CONFIG);
-  return clean;
+// Add hook to process external links for security
+purify.addHook('afterSanitizeAttributes', (node: Element) => {
+  // Process anchor tags
+  if (node.tagName === 'A') {
+    const href = node.getAttribute('href');
+    
+    if (href) {
+      // Check if link is external
+      const isExternal = /^https?:\/\//i.test(href);
+      
+      if (isExternal) {
+        // Get WordPress site URL to determine if truly external
+        const wpSiteUrl = process.env.WP_SITE_URL || '';
+        let isReallyExternal = true;
+        
+        if (wpSiteUrl) {
+          try {
+            const wpDomain = new URL(wpSiteUrl).hostname;
+            const linkDomain = new URL(href).hostname;
+            isReallyExternal = wpDomain !== linkDomain;
+          } catch (e) {
+            // If URL parsing fails, treat as external for safety
+            isReallyExternal = true;
+          }
+        }
+        
+        if (isReallyExternal) {
+          // Add security attributes for external links
+          node.setAttribute('target', '_blank');
+          node.setAttribute('rel', 'noopener noreferrer');
+          externalLinksCount++;
+        }
+      }
+    }
+  }
+});
+
+export function sanitizeHtml(dirtyHtml: string): string {
+  logger.info('Starting HTML sanitization');
+  
+  // Reset counter
+  externalLinksCount = 0;
+  
+  try {
+    const clean = purify.sanitize(dirtyHtml, WORDPRESS_CONFIG);
+    
+    if (externalLinksCount > 0) {
+      logger.info(`Processed ${externalLinksCount} external links for security`);
+    }
+    
+    logger.info('HTML sanitization completed');
+    return clean;
+    
+  } catch (error) {
+    logger.error('Sanitization failed:', error);
+    throw error;
+  }
 }
 
 export function validateHtml(_html: string): { valid: boolean; errors: string[] } {

@@ -88,7 +88,7 @@ export async function generateImages(params: GenerateImagesParams): Promise<Gene
         aspectRatio: aspectRatio,
         safetyFilterLevel: 'block_some',
         personGeneration: 'allow_adult',
-        negativePrompt: 'blurry, low quality, deformed hands, extra fingers, mutated hands, bad anatomy, ugly, disfigured'
+        negativePrompt: 'deformed, mutated, ugly, blurry, low quality, cartoon, anime, plastic skin, uncanny valley, disfigured face, bad anatomy, deformed hands, extra fingers, mutated hands, extra limbs, missing limbs'
       };
       
       const instance = {
@@ -132,11 +132,17 @@ export async function generateImages(params: GenerateImagesParams): Promise<Gene
       
       // Extract image data from response
       if (!response.predictions || response.predictions.length === 0) {
-        logger.warn(`No image generated for prompt: ${prompt}`);
+        logger.warn(`No predictions in response for prompt: ${prompt}`);
         continue;
       }
       
       const prediction = response.predictions[0];
+      
+      // Check for safety filter blocking
+      if (prediction.structValue?.fields?.safetyAttributes) {
+        const safetyAttrs = prediction.structValue.fields.safetyAttributes;
+        logger.info(`Safety attributes for image ${i + 1}:`, JSON.stringify(safetyAttrs, null, 2));
+      }
       
       // Extract base64 image data
       let base64Image: string | null = null;
@@ -147,6 +153,7 @@ export async function generateImages(params: GenerateImagesParams): Promise<Gene
       
       if (!base64Image) {
         logger.warn(`No image data in response for prompt: ${prompt}`);
+        logger.warn(`Response structure:`, JSON.stringify(prediction, null, 2));
         continue;
       }
       

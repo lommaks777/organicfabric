@@ -62,15 +62,14 @@ export async function generateImagePrompts(
   
   const client = getOpenAIClient();
   
-  const systemPrompt = `You are an expert at creating vivid, visual scene descriptions for AI image generation. 
-Your task is to analyze article text and suggest compelling visual scenes that would make great illustrations.
-Each scene should be:
-- Described in English
-- 1-2 sentences long
-- Concrete and visual (not abstract concepts)
-- Relevant to the article content
-- Depict people of SLAVIC or EASTERN EUROPEAN appearance.
-- Style: photorealistic, high detail, cinematic lighting.
+  const systemPrompt = `You are an expert art director creating vivid, photorealistic scene descriptions for an AI image generator.
+Your task is to analyze article text and suggest compelling visual scenes.
+Each scene description must be:
+- In English, 1-2 detailed sentences.
+- Photorealistic style. Specify camera details like '85mm lens', 'depth of field', 'golden hour light'.
+- The people depicted must be of SLAVIC or EASTERN EUROPEAN appearance. This is a strict requirement.
+- The mood should be professional, calm, and authentic.
+- Focus on realistic anatomy and natural poses.
 
 Return your response as a JSON array of strings.`;
   
