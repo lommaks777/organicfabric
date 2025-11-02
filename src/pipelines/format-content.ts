@@ -30,9 +30,20 @@ function getOpenAIClient(): OpenAI {
   return new OpenAI({ apiKey });
 }
 
+interface StructureBlock {
+  type: 'p' | 'h2' | 'h3' | 'li' | 'image';
+  paragraphIndex?: number;
+  imageIndex?: number;
+}
+
+interface StructureResponse {
+  structure: StructureBlock[];
+}
+
 /**
  * Format article text into WordPress-compatible HTML with integrated images
- * Uses OpenAI GPT to transform raw text into structured HTML
+ * Uses structural analysis approach: AI analyzes text structure and returns JSON,
+ * then code assembles HTML deterministically to guarantee 100% content preservation
  * 
  * @param rawText - Original unformatted article text
  * @param images - Array of uploaded images with URLs and prompts
@@ -42,38 +53,60 @@ export async function formatArticleHtml(
   rawText: string,
   images: Array<ImageData> = []
 ): Promise<string> {
-  logger.info('Starting article HTML formatting');
+  logger.info('Starting structural article HTML formatting');
   
   // Validate input
   if (!rawText || rawText.trim().length === 0) {
     throw new Error('Raw text is empty or invalid');
   }
   
+  // Step 1: Split text into paragraphs programmatically
+  const paragraphs = rawText
+    .split(/\n\n+/)
+    .map(p => p.trim())
+    .filter(p => p.length > 0);
+  
+  logger.info(`Split text into ${paragraphs.length} paragraphs`);
+  
+  if (paragraphs.length === 0) {
+    throw new Error('No valid paragraphs found in text');
+  }
+  
+  // Step 2: Request structure analysis from AI
   const client = getOpenAIClient();
   const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
   
-  // System prompt: Define GPT's role and instructions
-  const systemPrompt = `You are an expert web editor. Your task is to format raw text into clean HTML for WordPress.
-
-Instructions:
-- Use <p>, <h2>, <h3>, <ul>, <ol> for structure.
-- You will be given a number of available images.
-- At logically appropriate places in the text, you MUST insert special placeholders for these images.
-- The placeholders look like this: <!-- IMAGE_PLACEHOLDER_1 -->, <!-- IMAGE_PLACEHOLDER_2 -->, etc.
-- Use ALL available image placeholders. If 3 images are available, you must insert all 3 placeholders.
-
-Constraints:
-- DO NOT output <img> or <figure> tags yourself. Only use the placeholders.
-- Output ONLY body HTML content (no <html>, <body>, <head>).`;
+  // Build numbered paragraph listing for AI
+  const paragraphListing = paragraphs
+    .map((text, index) => `${index}: "${text}"`)
+    .join('\n');
   
-  // User prompt: Include raw text and available images
-  const userPrompt = `Format the following text. You have ${images.length} images available. Please insert the placeholders <!-- IMAGE_PLACEHOLDER_1 --> through <!-- IMAGE_PLACEHOLDER_${images.length} --> into the text at logical points.
+  // System prompt: Define structural analysis task
+  const systemPrompt = `You are a structural analyzer for articles. Your task is to analyze the provided text, which is split into numbered paragraphs, and determine the type of each paragraph (e.g., 'p', 'h2', 'h3', 'li') and decide where to insert images.
 
-Raw text:
-${rawText}`;
+You MUST return a JSON object with a single key "structure", which is an array of objects.
+Each object in the array represents a block of content and must have a "type" field.
+
+- For a regular paragraph, use: { "type": "p", "paragraphIndex": N }
+- For a heading, use: { "type": "h2", "paragraphIndex": N } or { "type": "h3", ... }
+- For a list item, use: { "type": "li", "paragraphIndex": N }
+- To insert an image, use: { "type": "image", "imageIndex": M }
+
+N is the original index of the paragraph (from 0).
+M is the index of the image to insert (from 1).
+
+Use ALL paragraph and image indexes exactly once. Do not skip or reorder them.`;
+  
+  // User prompt: Provide paragraph listing and image count
+  const userPrompt = `Analyze the following content. There are ${images.length} images available for insertion.
+
+Paragraphs:
+${paragraphListing}
+
+Return the JSON structure.`;
   
   try {
-    logger.info(`Calling OpenAI API with model: ${model}`);
+    logger.info(`Calling OpenAI API for structure analysis with model: ${model}`);
     
     const response = await client.chat.completions.create({
       model: model,
@@ -82,6 +115,7 @@ ${rawText}`;
         { role: 'user', content: userPrompt }
       ],
       temperature: 0.7,
+      response_format: { type: 'json_object' },
     });
     
     const content = response.choices[0]?.message?.content;
@@ -90,55 +124,148 @@ ${rawText}`;
       throw new Error('OpenAI returned empty response');
     }
     
-    // Clean up common artifacts from LLM responses
-    let cleanedContent = content.trim();
+    logger.info('Received structure analysis from OpenAI');
     
-    // Remove markdown code blocks if present
-    cleanedContent = cleanedContent.replace(/^```html\s*\n/i, '').replace(/\n```$/i, '');
-    cleanedContent = cleanedContent.replace(/^```\s*\n/i, '').replace(/\n```$/i, '');
-    
-    // Remove wrapping <html>, <body>, <head> tags if present (both standalone and in paragraphs)
-    cleanedContent = cleanedContent.replace(/<p>\s*<html[^>]*>\s*<head[^>]*>.*?<\/head>\s*<body[^>]*>\s*<\/p>/gis, '');
-    cleanedContent = cleanedContent.replace(/<p>\s*<html[^>]*>\s*<\/p>/gi, '');
-    cleanedContent = cleanedContent.replace(/<p>\s*<body[^>]*>\s*<\/p>/gi, '');
-    cleanedContent = cleanedContent.replace(/<\/body>\s*<\/html>/gi, '');
-    cleanedContent = cleanedContent.replace(/^<html[^>]*>\s*/i, '').replace(/<\/html>\s*$/i, '');
-    cleanedContent = cleanedContent.replace(/^<head[^>]*>.*?<\/head>\s*/is, '');
-    cleanedContent = cleanedContent.replace(/^<body[^>]*>\s*/i, '').replace(/<\/body>\s*$/i, '');
-    
-    // Clean up quotes that might be added
-    cleanedContent = cleanedContent.replace(/^["']|["']$/g, '');
-    
-    cleanedContent = cleanedContent.trim();
-    
-    logger.info(`Received formatted HTML from OpenAI, length: ${cleanedContent.length} bytes`);
-    
-    // Replace placeholders with actual figure blocks
-    let finalHtml = cleanedContent;
-    
-    for (let index = 0; index < images.length; index++) {
-      const image = images[index];
-      const placeholder = `<!-- IMAGE_PLACEHOLDER_${index + 1} -->`;
-      
-      // Generate short Russian caption for this image (used for both alt and caption)
-      const shortCaption = await generateShortRussianCaption(image.prompt);
-      
-      const figureHtml = `
-    <figure class="wp-block-image aligncenter size-large" style="max-width: 600px; margin: 20px auto;">
-      <img src="${image.source_url}" alt="${shortCaption}" />
-      <figcaption style="text-align: center; font-style: italic; font-size: 0.9em; color: #555;">${shortCaption}</figcaption>
-    </figure>`;
-      
-      // Replace placeholder with HTML block
-      finalHtml = finalHtml.replace(placeholder, figureHtml);
+    // Parse JSON response
+    let structureData: StructureResponse;
+    try {
+      structureData = JSON.parse(content);
+    } catch (parseError) {
+      logger.error('Failed to parse AI response as JSON, applying default structure');
+      // Fallback: treat all paragraphs as regular paragraphs
+      structureData = {
+        structure: paragraphs.map((_, index) => ({
+          type: 'p',
+          paragraphIndex: index
+        }))
+      };
     }
     
-    logger.info('Article formatting completed successfully');
+    if (!structureData.structure || !Array.isArray(structureData.structure)) {
+      throw new Error('Invalid structure format from AI');
+    }
     
-    return finalHtml;
+    logger.info(`Processing ${structureData.structure.length} structure blocks`);
+    
+    // Step 3: Assemble HTML from structure
+    let finalHtml = '';
+    let inList = false;
+    const usedParagraphs = new Set<number>();
+    const usedImages = new Set<number>();
+    
+    for (let i = 0; i < structureData.structure.length; i++) {
+      const block = structureData.structure[i];
+      
+      // Handle list closing
+      if (inList && block.type !== 'li') {
+        finalHtml += '\n</ul>\n';
+        inList = false;
+      }
+      
+      // Process block based on type
+      switch (block.type) {
+        case 'p':
+        case 'h2':
+        case 'h3': {
+          if (block.paragraphIndex === undefined) {
+            logger.warn(`Block type ${block.type} missing paragraphIndex, skipping`);
+            break;
+          }
+          const text = paragraphs[block.paragraphIndex];
+          if (text === undefined) {
+            logger.warn(`Paragraph index ${block.paragraphIndex} out of range, skipping`);
+            break;
+          }
+          usedParagraphs.add(block.paragraphIndex);
+          finalHtml += `<${block.type}>${text}</${block.type}>\n`;
+          break;
+        }
+        
+        case 'li': {
+          if (block.paragraphIndex === undefined) {
+            logger.warn('List item missing paragraphIndex, skipping');
+            break;
+          }
+          const text = paragraphs[block.paragraphIndex];
+          if (text === undefined) {
+            logger.warn(`Paragraph index ${block.paragraphIndex} out of range, skipping`);
+            break;
+          }
+          usedParagraphs.add(block.paragraphIndex);
+          
+          // Open list if needed
+          if (!inList) {
+            finalHtml += '<ul>\n';
+            inList = true;
+          }
+          
+          finalHtml += `  <li>${text}</li>\n`;
+          break;
+        }
+        
+        case 'image': {
+          if (block.imageIndex === undefined) {
+            logger.warn('Image block missing imageIndex, skipping');
+            break;
+          }
+          const imageArrayIndex = block.imageIndex - 1;
+          const image = images[imageArrayIndex];
+          if (!image) {
+            logger.warn(`Image index ${block.imageIndex} out of range, skipping`);
+            break;
+          }
+          usedImages.add(block.imageIndex);
+          
+          // Generate short Russian caption
+          const shortCaption = await generateShortRussianCaption(image.prompt);
+          
+          const figureHtml = `<figure class="wp-block-image aligncenter size-large" style="max-width: 600px; margin: 20px auto;">
+  <img src="${image.source_url}" alt="${shortCaption}" />
+  <figcaption style="text-align: center; font-style: italic; font-size: 0.9em; color: #555;">${shortCaption}</figcaption>
+</figure>\n`;
+          
+          finalHtml += figureHtml;
+          break;
+        }
+        
+        default:
+          logger.warn(`Unknown block type: ${block.type}`);
+      }
+    }
+    
+    // Close list if still open at end
+    if (inList) {
+      finalHtml += '</ul>\n';
+    }
+    
+    // Validation: Check for unused paragraphs
+    for (let i = 0; i < paragraphs.length; i++) {
+      if (!usedParagraphs.has(i)) {
+        logger.warn(`Paragraph ${i} was not used in structure, appending at end`);
+        finalHtml += `<p>${paragraphs[i]}</p>\n`;
+      }
+    }
+    
+    // Validation: Check for unused images
+    for (let i = 1; i <= images.length; i++) {
+      if (!usedImages.has(i)) {
+        logger.warn(`Image ${i} was not used in structure, appending at end`);
+        const image = images[i - 1];
+        const shortCaption = await generateShortRussianCaption(image.prompt);
+        const figureHtml = `<figure class="wp-block-image aligncenter size-large" style="max-width: 600px; margin: 20px auto;">
+  <img src="${image.source_url}" alt="${shortCaption}" />
+  <figcaption style="text-align: center; font-style: italic; font-size: 0.9em; color: #555;">${shortCaption}</figcaption>
+</figure>\n`;
+        finalHtml += figureHtml;
+      }
+    }
+    
+    logger.info('Structural article formatting completed successfully');
+    
+    return finalHtml.trim();
     
   } catch (error) {
-    logger.error('OpenAI formatting failed:', error);
+    logger.error('OpenAI structure analysis failed:', error);
     
     if (error instanceof Error) {
       if (error.message.includes('rate_limit')) {

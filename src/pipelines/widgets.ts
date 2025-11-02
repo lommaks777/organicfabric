@@ -124,10 +124,16 @@ export async function insertWidgets(
       logger.info('Bottom widget inserted at end');
     }
     
-    // Step 6: Extract HTML content (only body to avoid wrapper tags)
-    const resultHtml = $('body').html() || '';
-    logger.info('Widget insertion completed successfully');
-    return resultHtml;
+    // Step 6: Extract HTML content with reliable fallback handling
+    const bodyContent = $('body').html();
+    if (bodyContent) {
+      logger.info('Widget insertion completed successfully');
+      return bodyContent;
+    }
+    // Fallback if cheerio didn't create a body element
+    const fallbackContent = $.html() || '';
+    logger.info('Widget insertion completed successfully (using fallback extraction)');
+    return fallbackContent;
     
   } catch (error) {
     logger.error('Error during widget insertion:', error);
