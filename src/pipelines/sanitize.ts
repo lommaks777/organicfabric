@@ -44,6 +44,7 @@ const WORDPRESS_CONFIG = {
     'figure',
     'figcaption',
     'iframe',
+    'script',
   ],
   ALLOWED_ATTR: [
     'href',

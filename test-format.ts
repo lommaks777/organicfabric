@@ -2,12 +2,24 @@ import 'dotenv/config';
 import { formatArticleHtml } from './dist/pipelines/format-content.js';
 
 async function main() {
-  const testText = 'Тестовая статья. Это первый параграф.\n\nЭто второй параграф с важной информацией.';
+  const testText = `Профессиональное руководство по массажу лица
+
+Профессиональный массажист работает не просто с кожей, а через кожу, воздействуя на сложную, многоуровневую систему.
+
+Глубже поверхности: понимание слоев лица
+
+Лицо представляет собой сложную структуру, состоящую из нескольких слоев.
+
+Массаж помогает улучшить кровообращение и лимфоток.`;
   
   const testImages = [
     {
-      source_url: 'https://example.com/image1.png',
-      prompt: 'Test image 1',
+      source_url: 'https://shmmoscow.ru/wp-content/uploads/2025/10/test-image-1.png',
+      prompt: 'Professional massage therapist demonstrating facial anatomy layers on a model',
+    },
+    {
+      source_url: 'https://shmmoscow.ru/wp-content/uploads/2025/10/test-image-2.png',
+      prompt: 'Client receiving lymphatic drainage massage on treatment table',
     },
   ];
   
