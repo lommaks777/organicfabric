@@ -120,13 +120,13 @@ ${rawText}`;
       const image = images[index];
       const placeholder = `<!-- IMAGE_PLACEHOLDER_${index + 1} -->`;
       
-      // Generate short Russian caption for this image
+      // Generate short Russian caption for this image (used for both alt and caption)
       const shortCaption = await generateShortRussianCaption(image.prompt);
       
       const figureHtml = `
     <figure class="wp-block-image aligncenter size-large" style="max-width: 600px; margin: 20px auto;">
-      <img src="${image.source_url}" alt="${image.prompt}" />
-      <figcaption style="text-align: center; font-style: italic;">${shortCaption}</figcaption>
+      <img src="${image.source_url}" alt="${shortCaption}" />
+      <figcaption style="text-align: center; font-style: italic; font-size: 0.9em; color: #555;">${shortCaption}</figcaption>
     </figure>`;
       
       // Replace placeholder with HTML block

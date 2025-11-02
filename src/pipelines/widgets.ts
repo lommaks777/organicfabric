@@ -124,8 +124,8 @@ export async function insertWidgets(
       logger.info('Bottom widget inserted at end');
     }
     
-    // Step 6: Extract HTML content
-    const resultHtml = $.html();
+    // Step 6: Extract HTML content (only body to avoid wrapper tags)
+    const resultHtml = $('body').html() || '';
     logger.info('Widget insertion completed successfully');
     return resultHtml;
     
