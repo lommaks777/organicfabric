@@ -4,6 +4,7 @@
 
 import OpenAI from 'openai';
 import { logger } from '../core/logger.js';
+import { generateShortRussianCaption } from '../adapters/llm-openai.js';
 
 interface ImageData {
   source_url: string;
@@ -52,57 +53,24 @@ export async function formatArticleHtml(
   const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
   
   // System prompt: Define GPT's role and instructions
-  const systemPrompt = `You are an expert web editor for WordPress. Your task is to format text into clean, well-structured HTML.
+  const systemPrompt = `You are an expert web editor. Your task is to format raw text into clean HTML for WordPress.
 
-FORMATTING RULES:
-- Break text into short paragraphs using <p> tags
-- Use <h2> and <h3> for structure
-- Format lists as <ul> or <ol>
-- Create clean, readable HTML
+Instructions:
+- Use <p>, <h2>, <h3>, <ul>, <ol> for structure.
+- You will be given a number of available images.
+- At logically appropriate places in the text, you MUST insert special placeholders for these images.
+- The placeholders look like this: <!-- IMAGE_PLACEHOLDER_1 -->, <!-- IMAGE_PLACEHOLDER_2 -->, etc.
+- Use ALL available image placeholders. If 3 images are available, you must insert all 3 placeholders.
 
-IMAGE INSERTION RULES (CRITICAL):
-1. Insert the provided images at logically appropriate places in the text
-2. EACH image MUST be wrapped in a <figure> tag with these CSS classes:
-   <figure class="wp-block-image aligncenter size-large">
-3. The <img> tag MUST have:
-   - src attribute with the image URL
-   - alt attribute based on the image's prompt (in English)
-   - class="aligncenter size-large" for styling
-4. Add a <figcaption> tag inside the <figure>
-5. The <figcaption> text MUST be:
-   - SHORT (maximum 50 characters)
-   - IN RUSSIAN LANGUAGE
-   - Describe what the image shows for the reader
-   - DO NOT use the English generation prompt as caption
-
-EXAMPLE IMAGE FORMAT:
-<figure class="wp-block-image aligncenter size-large">
-  <img src="https://example.com/image.jpg" alt="massage therapist demonstrating technique" class="aligncenter size-large" />
-  <figcaption>Специалист демонстрирует технику массажа.</figcaption>
-</figure>
-
-OUTPUT CONSTRAINTS (VERY IMPORTANT):
-- Output ONLY the body HTML content
-- DO NOT include <html>, <body>, <head> tags
-- DO NOT wrap output in markdown code blocks
-- DO NOT add any prefixes like "\`\`\`html"
-- The output must start directly with content tags like <h2>, <p>, or <figure>
-- The final HTML must be clean and ready for WordPress editor`;
+Constraints:
+- DO NOT output <img> or <figure> tags yourself. Only use the placeholders.
+- Output ONLY body HTML content (no <html>, <body>, <head>).`;
   
   // User prompt: Include raw text and available images
-  let userPrompt = `Format the following article text into WordPress HTML:\n\n${rawText}`;
-  
-  if (images.length > 0) {
-    const imagesJson = JSON.stringify(
-      images.map(img => ({
-        source_url: img.source_url,
-        prompt: img.prompt,
-      })),
-      null,
-      2
-    );
-    userPrompt += `\n\nAvailable images to insert at logical positions:\n${imagesJson}`;
-  }
+  const userPrompt = `Format the following text. You have ${images.length} images available. Please insert the placeholders <!-- IMAGE_PLACEHOLDER_1 --> through <!-- IMAGE_PLACEHOLDER_${images.length} --> into the text at logical points.
+
+Raw text:
+${rawText}`;
   
   try {
     logger.info(`Calling OpenAI API with model: ${model}`);
@@ -144,9 +112,30 @@ OUTPUT CONSTRAINTS (VERY IMPORTANT):
     cleanedContent = cleanedContent.trim();
     
     logger.info(`Received formatted HTML from OpenAI, length: ${cleanedContent.length} bytes`);
+    
+    // Replace placeholders with actual figure blocks
+    let finalHtml = cleanedContent;
+    
+    for (let index = 0; index < images.length; index++) {
+      const image = images[index];
+      const placeholder = `<!-- IMAGE_PLACEHOLDER_${index + 1} -->`;
+      
+      // Generate short Russian caption for this image
+      const shortCaption = await generateShortRussianCaption(image.prompt);
+      
+      const figureHtml = `
+    <figure class="wp-block-image aligncenter size-large" style="max-width: 600px; margin: 20px auto;">
+      <img src="${image.source_url}" alt="${image.prompt}" />
+      <figcaption style="text-align: center; font-style: italic;">${shortCaption}</figcaption>
+    </figure>`;
+      
+      // Replace placeholder with HTML block
+      finalHtml = finalHtml.replace(placeholder, figureHtml);
+    }
+    
     logger.info('Article formatting completed successfully');
     
-    return cleanedContent;
+    return finalHtml;
     
   } catch (error) {
     logger.error('OpenAI formatting failed:', error);

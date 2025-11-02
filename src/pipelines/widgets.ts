@@ -100,33 +100,34 @@ export async function insertWidgets(
     // Step 3: Load HTML into Cheerio for DOM manipulation
     const $ = cheerio.load(html);
     
-    // Step 4: Insert top widget after 3rd paragraph (or at beginning if fewer paragraphs)
+    // Step 4: Insert top widget after 2nd block element (or at beginning if fewer blocks)
     if (topWidget) {
       logger.info(`Inserting top widget: ${topWidget.title} (${topWidget.id})`);
-      const paragraphs = $('p');
+      // Find first block-level elements: p, ul, ol, h2, h3, blockquote, figure
+      const blockElements = $('p, ul, ol, h2, h3, blockquote, figure');
       
-      if (paragraphs.length > 3) {
-        // Insert after 3rd paragraph (index 2)
-        paragraphs.eq(2).after(`\n${topWidget.embed_html}\n`);
-        logger.info('Top widget inserted after 3rd paragraph');
+      if (blockElements.length > 2) {
+        // Insert after 2nd block element (index 1)
+        blockElements.eq(1).after(`\n${topWidget.embed_html}\n`);
+        logger.info('Top widget inserted after 2nd block element');
       } else {
-        // Insert at the beginning if fewer than 3 paragraphs
-        $('body').prepend(`${topWidget.embed_html}\n`);
-        logger.info('Top widget inserted at beginning (fewer than 3 paragraphs)');
+        // Insert at the beginning if fewer than 3 block elements
+        $.root().prepend(`\n${topWidget.embed_html}\n`);
+        logger.info('Top widget inserted at beginning (fewer than 3 block elements)');
       }
     }
     
     // Step 5: Insert bottom widget at the end
     if (bottomWidget) {
       logger.info(`Inserting bottom widget: ${bottomWidget.title} (${bottomWidget.id})`);
-      $('body').append(`\n${bottomWidget.embed_html}`);
+      $.root().append(`\n${bottomWidget.embed_html}`);
       logger.info('Bottom widget inserted at end');
     }
     
-    // Step 6: Extract only body HTML (without wrapper tags)
-    const bodyHtml = $('body').html() || '';
+    // Step 6: Extract HTML content
+    const resultHtml = $.html();
     logger.info('Widget insertion completed successfully');
-    return bodyHtml;
+    return resultHtml;
     
   } catch (error) {
     logger.error('Error during widget insertion:', error);

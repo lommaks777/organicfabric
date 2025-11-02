@@ -167,6 +167,28 @@ export async function generatePrompt(_context: string, type: string): Promise<st
  * Extract article tags using OpenAI for widget matching
  * Analyzes article content and returns 5-7 semantic topic tags in Russian
  */
+/**
+ * Generate short Russian caption from English image prompt
+ * Uses OpenAI to transform English generation prompt into concise Russian description
+ */
+export async function generateShortRussianCaption(imagePrompt: string): Promise<string> {
+  const client = getOpenAIClient();
+  try {
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: 'You are a helpful assistant. Based on the English image prompt, create a short, descriptive caption in Russian, no more than 7-10 words.' },
+        { role: 'user', content: imagePrompt }
+      ],
+      temperature: 0.5,
+    });
+    return response.choices[0]?.message?.content?.trim() || 'Иллюстрация к статье';
+  } catch (error) {
+    logger.error('Failed to generate short caption', error);
+    return 'Иллюстрация к статье'; // Fallback
+  }
+}
+
 export async function extractArticleTags(articleText: string): Promise<string[]> {
   logger.info('Extracting article tags for widget matching');
   
