@@ -112,6 +112,14 @@ export function sanitizeHtml(dirtyHtml: string): string {
   try {
     const clean = purify.sanitize(dirtyHtml, WORDPRESS_CONFIG);
     
+    // Count figure blocks before and after
+    const figureBefore = (dirtyHtml.match(/<figure/g) || []).length;
+    const figureAfter = (clean.match(/<figure/g) || []).length;
+    
+    if (figureBefore !== figureAfter) {
+      logger.warn(`Sanitizer removed ${figureBefore - figureAfter} figure blocks (${figureBefore} -> ${figureAfter})`);
+    }
+    
     if (externalLinksCount > 0) {
       logger.info(`Processed ${externalLinksCount} external links for security`);
     }

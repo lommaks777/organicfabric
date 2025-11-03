@@ -44,7 +44,7 @@ export async function runJob(jobId: string): Promise<void> {
     let workingHtml = parsedDoc.rawHtml; // Начинаем с HTML, полученного из парсера
     try {
       const imageDataForFormatter = uploadedImages.map(img => ({ source_url: img.url, prompt: img.prompt || '' }));
-      const formattedHtml = await formatArticleHtml(parsedDoc.text, imageDataForFormatter);
+      const formattedHtml = await formatArticleHtml(parsedDoc.text, parsedDoc.rawHtml, imageDataForFormatter);
       // Проверяем, что AI вернул непустой результат
       if (formattedHtml && formattedHtml.length > 100) {
         workingHtml = formattedHtml;

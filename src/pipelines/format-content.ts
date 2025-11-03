@@ -5,6 +5,7 @@
 import OpenAI from 'openai';
 import { logger } from '../core/logger.js';
 import { generateShortRussianCaption } from '../adapters/llm-openai.js';
+import * as cheerio from 'cheerio';
 
 interface ImageData {
   source_url: string;
@@ -30,78 +31,75 @@ function getOpenAIClient(): OpenAI {
   return new OpenAI({ apiKey });
 }
 
-interface StructureBlock {
-  type: 'p' | 'h2' | 'h3' | 'li' | 'image';
-  paragraphIndex?: number;
-  imageIndex?: number;
-}
-
-interface StructureResponse {
-  structure: StructureBlock[];
-}
-
 /**
  * Format article text into WordPress-compatible HTML with integrated images
- * Uses structural analysis approach: AI analyzes text structure and returns JSON,
+ * Uses structural analysis approach: AI analyzes HTML block structure and returns JSON,
  * then code assembles HTML deterministically to guarantee 100% content preservation
  * 
- * @param rawText - Original unformatted article text
+ * @param rawText - Original unformatted article text (kept for compatibility)
+ * @param rawHtml - Original HTML from parser (primary structure source)
  * @param images - Array of uploaded images with URLs and prompts
  * @returns Promise resolving to formatted HTML string
  */
 export async function formatArticleHtml(
   rawText: string,
+  rawHtml: string,
   images: Array<ImageData> = []
 ): Promise<string> {
-  logger.info('Starting structural article HTML formatting');
+  logger.info('Starting structural HTML formatting based on pre-parsed blocks.');
   
-  // Validate input
-  if (!rawText || rawText.trim().length === 0) {
-    throw new Error('Raw text is empty or invalid');
+  // === STAGE 1: Pre-parse HTML into blocks using Cheerio ===
+  const $ = cheerio.load(rawHtml);
+  const blocks: string[] = [];
+  
+  $('h1, h2, h3, h4, p, li, blockquote').each((_, element) => {
+    const htmlContent = $(element).html();
+    if (htmlContent && htmlContent.trim().length > 0) {
+      blocks.push(htmlContent.trim());
+    }
+  });
+  
+  // Fallback: if no blocks found, split raw text by double newlines
+  if (blocks.length === 0) {
+    logger.warn('Cheerio found no blocks, falling back to simple text split.');
+    const textBlocks = rawText.split(/\n\n+/).filter(p => p.trim().length > 0);
+    if (textBlocks.length === 0) {
+      throw new Error('Content is empty after parsing.');
+    }
+    blocks.push(...textBlocks);
   }
   
-  // Step 1: Split text into paragraphs programmatically
-  const paragraphs = rawText
-    .split(/\n\n+/)
-    .map(p => p.trim())
-    .filter(p => p.length > 0);
+  logger.info(`Pre-parsed content into ${blocks.length} HTML blocks.`);
   
-  logger.info(`Split text into ${paragraphs.length} paragraphs`);
-  
-  if (paragraphs.length === 0) {
-    throw new Error('No valid paragraphs found in text');
-  }
-  
-  // Step 2: Request structure analysis from AI
+  // === STAGE 2: Request structure analysis from AI ===
   const client = getOpenAIClient();
-  const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  const model = 'gpt-4o'; // Using more powerful model for complex structural analysis
   
-  // Build numbered paragraph listing for AI
-  const paragraphListing = paragraphs
-    .map((text, index) => `${index}: "${text}"`)
+  // Build numbered block listing for AI (show first 150 chars for context)
+  const blockListing = blocks
+    .map((block, index) => `${index}: "${block.substring(0, 150)}..."`)
     .join('\n');
   
   // System prompt: Define structural analysis task
-  const systemPrompt = `You are a structural analyzer for articles. Your task is to analyze the provided text, which is split into numbered paragraphs, and determine the type of each paragraph (e.g., 'p', 'h2', 'h3', 'li') and decide where to insert images.
+  const systemPrompt = `You are a structural analyzer. Your task is to analyze content blocks and determine their semantic type (p, h2, h3, li) and where to insert images.
+Return a JSON object with a single key "structure", which is an array of objects.
+Each object represents a content block and must have a "type".
 
-You MUST return a JSON object with a single key "structure", which is an array of objects.
-Each object in the array represents a block of content and must have a "type" field.
+- For a regular paragraph: { "type": "p", "blockIndex": N }
+- For a heading: { "type": "h2", "blockIndex": N } or { "type": "h3", ... }
+- For a list item: { "type": "li", "blockIndex": N }
+- To insert an image: { "type": "image", "imageIndex": M }
 
-- For a regular paragraph, use: { "type": "p", "paragraphIndex": N }
-- For a heading, use: { "type": "h2", "paragraphIndex": N } or { "type": "h3", ... }
-- For a list item, use: { "type": "li", "paragraphIndex": N }
-- To insert an image, use: { "type": "image", "imageIndex": M }
-
-N is the original index of the paragraph (from 0).
+N is the original index of the block (from 0).
 M is the index of the image to insert (from 1).
-
-Use ALL paragraph and image indexes exactly once. Do not skip or reorder them.`;
+Use ALL block and image indexes exactly once.`;
   
-  // User prompt: Provide paragraph listing and image count
-  const userPrompt = `Analyze the following content. There are ${images.length} images available for insertion.
+  // User prompt: Provide block listing and image count
+  const userPrompt = `Analyze the following content blocks. There are ${images.length} images available.
+Insert placeholders for imageIndex 1 through ${images.length}.
 
-Paragraphs:
-${paragraphListing}
+Content Blocks:
+${blockListing}
 
 Return the JSON structure.`;
   
@@ -114,153 +112,76 @@ Return the JSON structure.`;
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      temperature: 0.7,
       response_format: { type: 'json_object' },
     });
     
     const content = response.choices[0]?.message?.content;
     
     if (!content) {
-      throw new Error('OpenAI returned empty response');
+      throw new Error('AI returned an empty structure response.');
     }
     
-    logger.info('Received structure analysis from OpenAI');
-    
-    // Parse JSON response
-    let structureData: StructureResponse;
-    try {
-      structureData = JSON.parse(content);
-    } catch (parseError) {
-      logger.error('Failed to parse AI response as JSON, applying default structure');
-      // Fallback: treat all paragraphs as regular paragraphs
-      structureData = {
-        structure: paragraphs.map((_, index) => ({
-          type: 'p',
-          paragraphIndex: index
-        }))
-      };
+    const structure = JSON.parse(content).structure;
+    if (!Array.isArray(structure)) {
+      throw new Error('AI response is not a valid structure array.');
     }
     
-    if (!structureData.structure || !Array.isArray(structureData.structure)) {
-      throw new Error('Invalid structure format from AI');
-    }
+    logger.info(`Received structure with ${structure.length} items from AI`);
     
-    logger.info(`Processing ${structureData.structure.length} structure blocks`);
-    
-    // Step 3: Assemble HTML from structure
+    // === STAGE 3: Assemble HTML from structure ===
     let finalHtml = '';
-    let inList = false;
-    const usedParagraphs = new Set<number>();
-    const usedImages = new Set<number>();
+    let isInsideList = false;
     
-    for (let i = 0; i < structureData.structure.length; i++) {
-      const block = structureData.structure[i];
-      
-      // Handle list closing
-      if (inList && block.type !== 'li') {
-        finalHtml += '\n</ul>\n';
-        inList = false;
+    for (const item of structure) {
+      // Close UL if current element is not LI and we were in a list
+      if (item.type !== 'li' && isInsideList) {
+        finalHtml += '</ul>\n';
+        isInsideList = false;
       }
       
       // Process block based on type
-      switch (block.type) {
+      switch (item.type) {
         case 'p':
         case 'h2':
-        case 'h3': {
-          if (block.paragraphIndex === undefined) {
-            logger.warn(`Block type ${block.type} missing paragraphIndex, skipping`);
-            break;
+        case 'h3':
+          if (item.blockIndex !== undefined && item.blockIndex < blocks.length) {
+            finalHtml += `<${item.type}>${blocks[item.blockIndex]}</${item.type}>\n`;
           }
-          const text = paragraphs[block.paragraphIndex];
-          if (text === undefined) {
-            logger.warn(`Paragraph index ${block.paragraphIndex} out of range, skipping`);
-            break;
-          }
-          usedParagraphs.add(block.paragraphIndex);
-          finalHtml += `<${block.type}>${text}</${block.type}>\n`;
           break;
-        }
         
-        case 'li': {
-          if (block.paragraphIndex === undefined) {
-            logger.warn('List item missing paragraphIndex, skipping');
-            break;
-          }
-          const text = paragraphs[block.paragraphIndex];
-          if (text === undefined) {
-            logger.warn(`Paragraph index ${block.paragraphIndex} out of range, skipping`);
-            break;
-          }
-          usedParagraphs.add(block.paragraphIndex);
-          
-          // Open list if needed
-          if (!inList) {
+        case 'li':
+          if (!isInsideList) {
             finalHtml += '<ul>\n';
-            inList = true;
+            isInsideList = true;
           }
-          
-          finalHtml += `  <li>${text}</li>\n`;
+          if (item.blockIndex !== undefined && item.blockIndex < blocks.length) {
+            finalHtml += `  <li>${blocks[item.blockIndex]}</li>\n`;
+          }
           break;
-        }
         
-        case 'image': {
-          if (block.imageIndex === undefined) {
-            logger.warn('Image block missing imageIndex, skipping');
-            break;
-          }
-          const imageArrayIndex = block.imageIndex - 1;
-          const image = images[imageArrayIndex];
-          if (!image) {
-            logger.warn(`Image index ${block.imageIndex} out of range, skipping`);
-            break;
-          }
-          usedImages.add(block.imageIndex);
-          
-          // Generate short Russian caption
-          const shortCaption = await generateShortRussianCaption(image.prompt);
-          
-          const figureHtml = `<figure class="wp-block-image aligncenter size-large" style="max-width: 600px; margin: 20px auto;">
-  <img src="${image.source_url}" alt="${shortCaption}" />
-  <figcaption style="text-align: center; font-style: italic; font-size: 0.9em; color: #555;">${shortCaption}</figcaption>
+        case 'image':
+          if (item.imageIndex !== undefined) {
+            const imageIndex = item.imageIndex - 1;
+            if (imageIndex < images.length) {
+              const image = images[imageIndex];
+              const caption = await generateShortRussianCaption(image.prompt);
+              finalHtml += `<figure class="wp-block-image aligncenter size-large" style="max-width: 600px; margin: 20px auto;">
+  <img src="${image.source_url}" alt="${caption}" />
+  <figcaption style="text-align: center; font-style: italic; font-size: 0.9em; color: #555;">${caption}</figcaption>
 </figure>\n`;
-          
-          finalHtml += figureHtml;
+            }
+          }
           break;
-        }
-        
-        default:
-          logger.warn(`Unknown block type: ${block.type}`);
       }
     }
     
-    // Close list if still open at end
-    if (inList) {
+    // Close UL if it remained open at the end
+    if (isInsideList) {
       finalHtml += '</ul>\n';
     }
     
-    // Validation: Check for unused paragraphs
-    for (let i = 0; i < paragraphs.length; i++) {
-      if (!usedParagraphs.has(i)) {
-        logger.warn(`Paragraph ${i} was not used in structure, appending at end`);
-        finalHtml += `<p>${paragraphs[i]}</p>\n`;
-      }
-    }
-    
-    // Validation: Check for unused images
-    for (let i = 1; i <= images.length; i++) {
-      if (!usedImages.has(i)) {
-        logger.warn(`Image ${i} was not used in structure, appending at end`);
-        const image = images[i - 1];
-        const shortCaption = await generateShortRussianCaption(image.prompt);
-        const figureHtml = `<figure class="wp-block-image aligncenter size-large" style="max-width: 600px; margin: 20px auto;">
-  <img src="${image.source_url}" alt="${shortCaption}" />
-  <figcaption style="text-align: center; font-style: italic; font-size: 0.9em; color: #555;">${shortCaption}</figcaption>
-</figure>\n`;
-        finalHtml += figureHtml;
-      }
-    }
-    
-    logger.info('Structural article formatting completed successfully');
+    const figureCount = (finalHtml.match(/<figure/g) || []).length;
+    logger.info(`Structural HTML formatting completed successfully. Figure blocks: ${figureCount}`);
     
     return finalHtml.trim();
     

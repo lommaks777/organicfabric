@@ -127,6 +127,14 @@ export async function insertWidgets(
     // Step 6: Extract HTML content with reliable fallback handling
     const bodyContent = $('body').html();
     if (bodyContent) {
+      // Count figure blocks before and after
+      const figureBefore = (html.match(/<figure/g) || []).length;
+      const figureAfter = (bodyContent.match(/<figure/g) || []).length;
+      
+      if (figureBefore !== figureAfter) {
+        logger.warn(`Widget insertion removed ${figureBefore - figureAfter} figure blocks (${figureBefore} -> ${figureAfter})`);
+      }
+      
       logger.info('Widget insertion completed successfully');
       return bodyContent;
     }

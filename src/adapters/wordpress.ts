@@ -52,6 +52,11 @@ function getWordPressClient(): AxiosInstance {
 export async function createPost(params: CreatePostParams): Promise<CreatePostResponse> {
   const client = getWordPressClient();
   
+  // Log content stats before sending
+  const figureCount = (params.content.match(/<figure/g) || []).length;
+  const widgetCount = (params.content.match(/gc-embed/g) || []).length;
+  logger.info(`Creating post with ${figureCount} figure blocks and ${widgetCount} widgets`);
+  
   const response = await client.post('/wp-json/wp/v2/posts', {
     title: params.title,
     content: params.content,
