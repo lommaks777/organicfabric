@@ -67,9 +67,9 @@ Your task is to analyze article text and suggest compelling visual scenes.
 Each scene description must be:
 - In English, 1-2 detailed sentences.
 - Photorealistic style. Specify camera details like '85mm lens', 'depth of field', 'golden hour light'.
-- The people depicted must be of SLAVIC or EASTERN EUROPEAN appearance. This is a strict requirement.
-- The mood should be professional, calm, and authentic.
+- Professional, calm, and authentic mood.
 - Focus on realistic anatomy and natural poses.
+- DO NOT mention ethnicity, nationality, or geographic origin of people.
 
 Return your response as a JSON array of strings.`;
   
@@ -177,12 +177,25 @@ export async function generateShortRussianCaption(imagePrompt: string): Promise<
     const response = await client.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: 'You are a helpful assistant. Based on the English image prompt, create a short, descriptive caption in Russian, no more than 7-10 words.' },
+        { 
+          role: 'system', 
+          content: 'You are a helpful assistant. Based on the English image prompt, create a short, descriptive caption in Russian, no more than 7-10 words. DO NOT mention ethnicity, nationality, or geographic origin (like "славянский", "восточноевропейский", etc.). Focus only on the action and scene.' 
+        },
         { role: 'user', content: imagePrompt }
       ],
       temperature: 0.5,
     });
-    return response.choices[0]?.message?.content?.trim() || 'Иллюстрация к статье';
+    
+    let caption = response.choices[0]?.message?.content?.trim() || 'Иллюстрация к статье';
+    
+    // Фильтруем нежелательные слова на всякий случай
+    const unwantedWords = ['славянский', 'славянская', 'восточноевропейский', 'восточноевропейская', 'европейский', 'европейская'];
+    unwantedWords.forEach(word => {
+      const regex = new RegExp(`\\b${word}\\b`, 'gi');
+      caption = caption.replace(regex, '').replace(/\s+/g, ' ').trim();
+    });
+    
+    return caption;
   } catch (error) {
     logger.error('Failed to generate short caption', error);
     return 'Иллюстрация к статье'; // Fallback

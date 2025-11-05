@@ -8,10 +8,6 @@ import { widgets } from '../config/index.js';
 import type { WidgetDefinition } from '../config/widgets.js';
 import * as cheerio from 'cheerio';
 
-// Configuration: Universal fallback widget ID for bottom position
-// Replace this with the actual ID of your universal call-to-action widget
-const UNIVERSAL_BOTTOM_WIDGET_ID = 'universal-cta-bottom';
-
 /**
  * Find the best matching widget for a given position based on tag overlap
  */
@@ -54,14 +50,15 @@ function findBestWidget(
     }
   }
   
-  // If no match found and this is bottom position, use universal fallback widget
-  if (!bestWidget && position === 'bottom') {
-    const fallbackWidget = widgets.find(w => w.id === UNIVERSAL_BOTTOM_WIDGET_ID);
+  // If no match found, use universal fallback widget
+  if (!bestWidget) {
+    const fallbackId = position === 'top' ? 'universal-fallback-top' : 'universal-fallback-bottom';
+    const fallbackWidget = widgets.find(w => w.id === fallbackId);
     if (fallbackWidget) {
-      logger.info(`No specific bottom widget found, using universal fallback: ${fallbackWidget.title}`);
+      logger.info(`No specific ${position} widget found, using universal fallback: ${fallbackWidget.title}`);
       return fallbackWidget;
     } else {
-      logger.warn(`Universal fallback widget with ID "${UNIVERSAL_BOTTOM_WIDGET_ID}" not found`);
+      logger.warn(`Universal fallback widget with ID "${fallbackId}" not found`);
     }
   }
   
@@ -100,27 +97,41 @@ export async function insertWidgets(
     // Step 3: Load HTML into Cheerio for DOM manipulation
     const $ = cheerio.load(html);
     
-    // Step 4: Insert top widget after 2nd block element (or at beginning if fewer blocks)
+    // Step 4: Insert top widget after 3rd block element (or at beginning if fewer blocks)
     if (topWidget) {
       logger.info(`Inserting top widget: ${topWidget.title} (${topWidget.id})`);
       // Find first block-level elements: p, ul, ol, h2, h3, blockquote, figure
       const blockElements = $('p, ul, ol, h2, h3, blockquote, figure');
       
-      if (blockElements.length > 2) {
-        // Insert after 2nd block element (index 1)
-        blockElements.eq(1).after(`\n${topWidget.embed_html}\n`);
-        logger.info('Top widget inserted after 2nd block element');
+      // Wrap widget in Gutenberg HTML block to preserve scripts
+      const widgetHtml = `
+<!-- wp:html -->
+${topWidget.embed_html}
+<!-- /wp:html -->
+`;
+      
+      if (blockElements.length > 3) {
+        // Insert after 3rd block element (index 2)
+        blockElements.eq(2).after(widgetHtml);
+        logger.info('Top widget inserted after 3rd block element');
       } else {
-        // Insert at the beginning if fewer than 3 block elements
-        $.root().prepend(`\n${topWidget.embed_html}\n`);
-        logger.info('Top widget inserted at beginning (fewer than 3 block elements)');
+        // Insert at the beginning if fewer than 4 block elements
+        $('body').prepend(widgetHtml);
+        logger.info('Top widget inserted at beginning (fewer than 4 block elements)');
       }
     }
     
     // Step 5: Insert bottom widget at the end
     if (bottomWidget) {
       logger.info(`Inserting bottom widget: ${bottomWidget.title} (${bottomWidget.id})`);
-      $.root().append(`\n${bottomWidget.embed_html}`);
+      // Insert inside body, not in root, to ensure it's captured by $('body').html()
+      // Wrap widget in Gutenberg HTML block to preserve scripts
+      const widgetHtml = `
+<!-- wp:html -->
+${bottomWidget.embed_html}
+<!-- /wp:html -->
+`;
+      $('body').append(widgetHtml);
       logger.info('Bottom widget inserted at end');
     }
     
@@ -130,17 +141,19 @@ export async function insertWidgets(
       // Count figure blocks before and after
       const figureBefore = (html.match(/<figure/g) || []).length;
       const figureAfter = (bodyContent.match(/<figure/g) || []).length;
+      const widgetAfter = (bodyContent.match(/gc-embed/g) || []).length;
       
       if (figureBefore !== figureAfter) {
         logger.warn(`Widget insertion removed ${figureBefore - figureAfter} figure blocks (${figureBefore} -> ${figureAfter})`);
       }
       
-      logger.info('Widget insertion completed successfully');
+      logger.info(`Widget insertion completed: ${widgetAfter} widgets in result HTML`);
       return bodyContent;
     }
     // Fallback if cheerio didn't create a body element
     const fallbackContent = $.html() || '';
-    logger.info('Widget insertion completed successfully (using fallback extraction)');
+    const widgetCount = (fallbackContent.match(/gc-embed/g) || []).length;
+    logger.info(`Widget insertion completed (fallback): ${widgetCount} widgets in result HTML`);
     return fallbackContent;
     
   } catch (error) {

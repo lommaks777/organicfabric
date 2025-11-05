@@ -36,7 +36,8 @@
     "handlebars": "^4.7.8",
     "jsdom": "^25.0.1",
     "mammoth": "^1.8.0",
-    "openai": "^6.7.0"
+    "openai": "^6.7.0",
+    "sharp": "^0.34.4"
   },
   "devDependencies": {
     "@types/dompurify": "^3.0.5",

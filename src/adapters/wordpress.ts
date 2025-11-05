@@ -5,6 +5,7 @@
 import axios, { AxiosInstance } from 'axios';
 import FormData from 'form-data';
 import { logger } from '../core/logger.js';
+import sharp from 'sharp';
 
 interface CreatePostParams {
   title: string;
@@ -52,11 +53,6 @@ function getWordPressClient(): AxiosInstance {
 export async function createPost(params: CreatePostParams): Promise<CreatePostResponse> {
   const client = getWordPressClient();
   
-  // Log content stats before sending
-  const figureCount = (params.content.match(/<figure/g) || []).length;
-  const widgetCount = (params.content.match(/gc-embed/g) || []).length;
-  logger.info(`Creating post with ${figureCount} figure blocks and ${widgetCount} widgets`);
-  
   const response = await client.post('/wp-json/wp/v2/posts', {
     title: params.title,
     content: params.content,
@@ -91,16 +87,36 @@ export async function uploadMedia(
     throw new Error('File buffer is empty');
   }
   
-  logger.info(`File buffer size: ${fileBuffer.length} bytes`);
+  logger.info(`Original file buffer size: ${fileBuffer.length} bytes (${(fileBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
+  
+  // Optimize image: resize to max 600px width and convert to JPEG with 85% quality
+  let optimizedBuffer: Buffer;
+  try {
+    optimizedBuffer = await sharp(fileBuffer)
+      .resize(600, null, { // 600px width, auto height
+        withoutEnlargement: true, // Don't enlarge smaller images
+        fit: 'inside' // Maintain aspect ratio
+      })
+      .jpeg({ quality: 85 }) // Convert to JPEG with 85% quality
+      .toBuffer();
+    
+    logger.info(`Optimized file size: ${optimizedBuffer.length} bytes (${(optimizedBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
+    logger.info(`Size reduction: ${(100 - (optimizedBuffer.length / fileBuffer.length * 100)).toFixed(1)}%`);
+  } catch (optimizeError) {
+    logger.error('Image optimization failed, using original:', optimizeError);
+    optimizedBuffer = fileBuffer;
+  }
   
   // Create FormData object
   const formData = new FormData();
   
+  // Change filename extension to .jpg
+  const jpegFilename = filename.replace(/\.png$/i, '.jpg');
+  
   // Append file to form data
-  // The file field name must be 'file' for WordPress
-  formData.append('file', fileBuffer, {
-    filename: filename,
-    contentType: 'image/png', // Vertex AI generates PNG images
+  formData.append('file', optimizedBuffer, {
+    filename: jpegFilename,
+    contentType: 'image/jpeg', // Now using JPEG instead of PNG
   });
   
   // Create base64 encoded credentials for Basic Auth

@@ -61,6 +61,13 @@ const WORDPRESS_CONFIG = {
     'data-*',
   ],
   ADD_ATTR: ['target', 'rel'],
+  ALLOW_DATA_ATTR: true,
+  KEEP_CONTENT: true,
+  // CRITICAL: Allow HTML comments for Gutenberg blocks
+  ALLOW_UNKNOWN_PROTOCOLS: false,
+  RETURN_DOM: false,
+  RETURN_DOM_FRAGMENT: false,
+  FORCE_BODY: false,
 };
 
 // Track external links processed
@@ -110,14 +117,48 @@ export function sanitizeHtml(dirtyHtml: string): string {
   externalLinksCount = 0;
   
   try {
-    const clean = purify.sanitize(dirtyHtml, WORDPRESS_CONFIG);
+    // Extract Gutenberg comments before sanitization
+    const gutenbergComments: Array<{placeholder: string; comment: string}> = [];
+    let htmlWithPlaceholders = dirtyHtml;
+    
+    // Replace Gutenberg comments with placeholders
+    htmlWithPlaceholders = htmlWithPlaceholders.replace(/<!--\s*(\/?)wp:[^>]+-->/g, (match) => {
+      const placeholder = `__GUTENBERG_COMMENT_${gutenbergComments.length}__`;
+      gutenbergComments.push({ placeholder, comment: match });
+      return placeholder;
+    });
+    
+    // Sanitize HTML (without Gutenberg comments)
+    const clean = purify.sanitize(htmlWithPlaceholders, WORDPRESS_CONFIG);
+    
+    // Restore Gutenberg comments
+    let finalHtml = clean;
+    gutenbergComments.forEach(({ placeholder, comment }) => {
+      finalHtml = finalHtml.replace(placeholder, comment);
+    });
     
     // Count figure blocks before and after
     const figureBefore = (dirtyHtml.match(/<figure/g) || []).length;
-    const figureAfter = (clean.match(/<figure/g) || []).length;
+    const figureAfter = (finalHtml.match(/<figure/g) || []).length;
     
     if (figureBefore !== figureAfter) {
       logger.warn(`Sanitizer removed ${figureBefore - figureAfter} figure blocks (${figureBefore} -> ${figureAfter})`);
+    }
+    
+    // Count tables before and after
+    const tableBefore = (dirtyHtml.match(/<table/g) || []).length;
+    const tableAfter = (finalHtml.match(/<table/g) || []).length;
+    
+    if (tableBefore !== tableAfter) {
+      logger.warn(`Sanitizer removed ${tableBefore - tableAfter} tables (${tableBefore} -> ${tableAfter})`);
+    } else if (tableAfter > 0) {
+      logger.info(`Sanitizer preserved ${tableAfter} table(s)`);
+    }
+    
+    // Count Gutenberg comments
+    const gutenbergCount = (finalHtml.match(/<!-- wp:/g) || []).length;
+    if (gutenbergCount > 0) {
+      logger.info(`Sanitizer preserved ${gutenbergCount} Gutenberg comment(s)`);
     }
     
     if (externalLinksCount > 0) {
@@ -125,7 +166,7 @@ export function sanitizeHtml(dirtyHtml: string): string {
     }
     
     logger.info('HTML sanitization completed');
-    return clean;
+    return finalHtml;
     
   } catch (error) {
     logger.error('Sanitization failed:', error);

@@ -43,7 +43,11 @@ export async function runJob(jobId: string): Promise<void> {
     // === Этап 3: Форматирование контента (основной + fallback) ===
     let workingHtml = parsedDoc.rawHtml; // Начинаем с HTML, полученного из парсера
     try {
-      const imageDataForFormatter = uploadedImages.map(img => ({ source_url: img.url, prompt: img.prompt || '' }));
+      const imageDataForFormatter = uploadedImages.map(img => ({ 
+        source_url: img.url, 
+        prompt: img.prompt || '',
+        wpMediaId: img.wpMediaId 
+      }));
       const formattedHtml = await formatArticleHtml(parsedDoc.text, parsedDoc.rawHtml, imageDataForFormatter);
       // Проверяем, что AI вернул непустой результат
       if (formattedHtml && formattedHtml.length > 100) {
@@ -78,9 +82,24 @@ export async function runJob(jobId: string): Promise<void> {
     // === Этап 5: Публикация в WordPress ===
     const featuredMediaId = uploadedImages.length > 0 ? uploadedImages[0].wpMediaId : undefined;
     const postTitle = `[AUTO] ${metadata.name.replace(/-process$/, '')}`;
+    
+    // ФИНАЛЬНАЯ ОЧИСТКА ПЕРЕД ПУБЛИКАЦИЕЙ: удаляем <html> и <body> теги
+    // Используем глобальную замену, так как Cheerio может добавить эти теги
+    const finalHtmlCleaned = finalHtml
+      .replace(/<\/?html[^>]*>/gi, '')
+      .replace(/<\/?head[^>]*>/gi, '')
+      .replace(/<\/?body[^>]*>/gi, '')
+      .trim();
+    
+    // Логируем статистику ПОСЛЕ очистки
+    const figureCount = (finalHtmlCleaned.match(/<figure/g) || []).length;
+    const widgetCount = (finalHtmlCleaned.match(/gc-embed/g) || []).length;
+    const tableCount = (finalHtmlCleaned.match(/<table/g) || []).length;
+    logger.info(`[Job ${jobId}] Final content stats: ${figureCount} figure blocks, ${widgetCount} widgets, ${tableCount} tables`);
+    
     const post = await wordpress.createPost({
       title: postTitle,
-      content: finalHtml,
+      content: finalHtmlCleaned,
       status: 'draft',
       featuredMedia: featuredMediaId,
     });

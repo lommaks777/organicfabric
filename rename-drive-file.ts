@@ -9,37 +9,26 @@ async function main() {
   });
   
   const drive = google.drive({ version: 'v3', auth });
-  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID!;
   
-  const response = await drive.files.list({
-    q: `'${folderId}' in parents and trashed = false`,
-    fields: 'files(id, name)',
-  });
+  // Get file ID and new name from command line arguments
+  const fileId = process.argv[2];
+  const newName = process.argv[3];
   
-  const files = response.data.files || [];
-  console.log('Files in folder:');
-  files.forEach((f: any) => {
-    console.log(`  - ${f.name} (ID: ${f.id})`);
-  });
-  
-  // Find -process or -done file
-  const processFile = files.find((f: any) => f.name?.includes('Техническое задание на статью о массаже'));
-  if (processFile && processFile.name && processFile.id) {
-    console.log(`\nFound file: ${processFile.name}`);
-    const originalName = processFile.name.replace(/-process|-done|-error/g, '');
-    console.log(`Renaming back to: ${originalName}`);
-    
-    await drive.files.update({
-      fileId: processFile.id,
-      requestBody: {
-        name: originalName,
-      },
-    });
-    
-    console.log('✓ File renamed successfully!');
-  } else {
-    console.log('\nFile not found');
+  if (!fileId || !newName) {
+    console.error('Usage: npx tsx rename-drive-file.ts <fileId> <newName>');
+    process.exit(1);
   }
+  
+  console.log(`Renaming file ${fileId} to: ${newName}`);
+  
+  await drive.files.update({
+    fileId: fileId,
+    requestBody: {
+      name: newName,
+    },
+  });
+  
+  console.log('✓ File renamed successfully!');
 }
 
 main()

@@ -10,6 +10,7 @@ import * as cheerio from 'cheerio';
 interface ImageData {
   source_url: string;
   prompt: string;
+  wpMediaId?: number;
 }
 
 interface FormatOptions {
@@ -51,11 +52,26 @@ export async function formatArticleHtml(
   // === STAGE 1: Pre-parse HTML into blocks using Cheerio ===
   const $ = cheerio.load(rawHtml);
   const blocks: string[] = [];
+  const blockTypes: string[] = []; // Track block types for AI
   
-  $('h1, h2, h3, h4, p, li, blockquote').each((_, element) => {
-    const htmlContent = $(element).html();
-    if (htmlContent && htmlContent.trim().length > 0) {
-      blocks.push(htmlContent.trim());
+  // Parse all block-level elements including tables
+  $('h1, h2, h3, h4, p, li, blockquote, table').each((_, element) => {
+    const $elem = $(element);
+    const tagName = $elem.prop('tagName')?.toLowerCase() || 'p';
+    
+    // For tables, get the complete table HTML
+    if (tagName === 'table') {
+      const tableHtml = $.html($elem);
+      if (tableHtml && tableHtml.trim().length > 0) {
+        blocks.push(tableHtml.trim());
+        blockTypes.push('table');
+      }
+    } else {
+      const htmlContent = $elem.html();
+      if (htmlContent && htmlContent.trim().length > 0) {
+        blocks.push(htmlContent.trim());
+        blockTypes.push(tagName);
+      }
     }
   });
   
@@ -71,6 +87,12 @@ export async function formatArticleHtml(
   
   logger.info(`Pre-parsed content into ${blocks.length} HTML blocks.`);
   
+  // Log table count
+  const tableCount = blockTypes.filter(t => t === 'table').length;
+  if (tableCount > 0) {
+    logger.info(`Found ${tableCount} table(s) in content`);
+  }
+  
   // === STAGE 2: Request structure analysis from AI ===
   const client = getOpenAIClient();
   const model = 'gpt-4o'; // Using more powerful model for complex structural analysis
@@ -81,18 +103,28 @@ export async function formatArticleHtml(
     .join('\n');
   
   // System prompt: Define structural analysis task
-  const systemPrompt = `You are a structural analyzer. Your task is to analyze content blocks and determine their semantic type (p, h2, h3, li) and where to insert images.
+  const systemPrompt = `You are a structural analyzer. Your task is to analyze content blocks and determine their semantic type (p, h2, h3, li, table) and where to insert images.
 Return a JSON object with a single key "structure", which is an array of objects.
 Each object represents a content block and must have a "type".
 
 - For a regular paragraph: { "type": "p", "blockIndex": N }
 - For a heading: { "type": "h2", "blockIndex": N } or { "type": "h3", ... }
 - For a list item: { "type": "li", "blockIndex": N }
+- For a table: { "type": "table", "blockIndex": N }
 - To insert an image: { "type": "image", "imageIndex": M }
 
 N is the original index of the block (from 0).
 M is the index of the image to insert (from 1).
-Use ALL block and image indexes exactly once.`;
+
+CRITICAL REQUIREMENTS:
+1. You MUST use ALL block indexes from 0 to ${blocks.length - 1} exactly once
+2. You MUST insert ALL ${images.length} images (imageIndex 1 through ${images.length})
+3. Distribute images evenly throughout the content:
+   - First image after ~30% of content
+   - Second image after ~60% of content  
+   - Third image after ~85% of content
+4. NEVER place images at the very beginning or very end
+5. Place images after complete sections, not in the middle of lists or tables`;
   
   // User prompt: Provide block listing and image count
   const userPrompt = `Analyze the following content blocks. There are ${images.length} images available.
@@ -128,6 +160,48 @@ Return the JSON structure.`;
     
     logger.info(`Received structure with ${structure.length} items from AI`);
     
+    // Log table count in structure
+    const tableItems = structure.filter((item: any) => item.type === 'table');
+    if (tableItems.length > 0) {
+      logger.info(`AI included ${tableItems.length} table(s) in structure`);
+    } else if (tableCount > 0) {
+      logger.warn(`AI did NOT include any tables in structure, but ${tableCount} were found in blocks`);
+    }
+    
+    // Validate that ALL images are included
+    const imageItems = structure.filter((item: any) => item.type === 'image');
+    const usedImageIndexes = imageItems.map((item: any) => item.imageIndex);
+    const missingImages: number[] = [];
+    
+    for (let i = 1; i <= images.length; i++) {
+      if (!usedImageIndexes.includes(i)) {
+        missingImages.push(i);
+      }
+    }
+    
+    if (missingImages.length > 0) {
+      logger.warn(`AI missed ${missingImages.length} image(s): ${missingImages.join(', ')}. Auto-inserting them.`);
+      
+      // Auto-insert missing images at strategic positions
+      const contentBlocks = structure.filter((item: any) => item.type === 'p' || item.type === 'h2' || item.type === 'h3');
+      const totalBlocks = contentBlocks.length;
+      
+      missingImages.forEach((imageIndex, idx) => {
+        // Calculate position: distribute evenly
+        const position = Math.floor(totalBlocks * (0.3 + (idx * 0.3)));
+        const insertAfterBlock = contentBlocks[position];
+        
+        if (insertAfterBlock) {
+          // Find position in original structure
+          const structureIndex = structure.indexOf(insertAfterBlock);
+          if (structureIndex >= 0) {
+            structure.splice(structureIndex + 1, 0, { type: 'image', imageIndex });
+            logger.info(`Auto-inserted image ${imageIndex} after block at position ${structureIndex}`);
+          }
+        }
+      });
+    }
+    
     // === STAGE 3: Assemble HTML from structure ===
     let finalHtml = '';
     let isInsideList = false;
@@ -149,6 +223,17 @@ Return the JSON structure.`;
           }
           break;
         
+        case 'table':
+          // Wrap table in Gutenberg HTML block to preserve it in WordPress
+          if (item.blockIndex !== undefined && item.blockIndex < blocks.length) {
+            finalHtml += `
+<!-- wp:html -->
+${blocks[item.blockIndex]}
+<!-- /wp:html -->
+`;
+          }
+          break;
+        
         case 'li':
           if (!isInsideList) {
             finalHtml += '<ul>\n';
@@ -165,10 +250,17 @@ Return the JSON structure.`;
             if (imageIndex < images.length) {
               const image = images[imageIndex];
               const caption = await generateShortRussianCaption(image.prompt);
-              finalHtml += `<figure class="wp-block-image aligncenter size-large" style="max-width: 600px; margin: 20px auto;">
-  <img src="${image.source_url}" alt="${caption}" />
+              
+              // Gutenberg-совместимый блок изображения с ограничением размера
+              const imageId = image.wpMediaId || 0;
+              finalHtml += `
+<!-- wp:image {"align":"center","id":${imageId},"sizeSlug":"large","linkDestination":"none"} -->
+<figure class="wp-block-image aligncenter size-large" style="max-width: 600px; margin: 20px auto;">
+  <img src="${image.source_url}" alt="${caption}" class="wp-image-${imageId}" style="max-width: 100%; height: auto;"/>
   <figcaption style="text-align: center; font-style: italic; font-size: 0.9em; color: #555;">${caption}</figcaption>
-</figure>\n`;
+</figure>
+<!-- /wp:image -->
+`;
             }
           }
           break;
