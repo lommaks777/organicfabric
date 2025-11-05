@@ -50,9 +50,5 @@ RUN npx prisma generate
 # Expose port (Railway will set PORT env var)
 EXPOSE 3000
 
-# Add healthcheck
-HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
-  CMD node -e "require('http').get('http://0.0.0.0:' + (process.env.PORT || 3000) + '/', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
-
 # Start command  
 CMD ["/bin/sh", "-c", "npx prisma migrate deploy && echo 'Starting app...' && node dist/index.js"]
