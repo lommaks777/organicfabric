@@ -20,6 +20,8 @@ build/
 !package.json
 !package-lock.json
 !tsconfig.json
+!railway.json
+!src/config/widgets.json
 
 # Vercel
 .vercel/
