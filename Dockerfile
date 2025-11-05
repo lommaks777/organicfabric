@@ -20,6 +20,9 @@ RUN npx prisma generate
 # Build TypeScript
 RUN npm run build
 
+# Copy JSON config files that TypeScript doesn't copy
+RUN mkdir -p dist/config && cp src/config/widgets.json dist/config/widgets.json
+
 # Production stage
 FROM node:20-alpine
 
