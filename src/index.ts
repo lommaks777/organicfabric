@@ -43,11 +43,17 @@ app.get('/api/cron/poll-drive', async (req: Request, res: Response) => {
 });
 
 async function main() {
+  logger.info('='.repeat(50));
   logger.info('Application starting...');
+  logger.info(`NODE_ENV: ${process.env.NODE_ENV}`);
+  logger.info(`PORT: ${PORT}`);
+  logger.info(`DATABASE_URL exists: ${!!process.env.DATABASE_URL}`);
+  logger.info(`OPENAI_API_KEY exists: ${!!process.env.OPENAI_API_KEY}`);
+  logger.info('='.repeat(50));
 
   app.listen(PORT, '0.0.0.0', () => {
-    logger.info(`Server is running on http://0.0.0.0:${PORT}`);
-    logger.info(`Cron endpoint: http://0.0.0.0:${PORT}/api/cron/poll-drive`);
+    logger.info(`✅ Server is running on http://0.0.0.0:${PORT}`);
+    logger.info(`✅ Cron endpoint: http://0.0.0.0:${PORT}/api/cron/poll-drive`);
   });
 
   logger.info('Application initialized successfully');
