@@ -60,9 +60,32 @@ async function main() {
   logger.info(`OPENAI_API_KEY exists: ${!!process.env.OPENAI_API_KEY}`);
   logger.info('='.repeat(50));
 
-  app.listen(PORT, '0.0.0.0', () => {
+  // Test database connection before starting server
+  try {
+    const { prisma } = await import('./db/prisma.js');
+    await prisma.$connect();
+    logger.info('✅ Database connection successful');
+    await prisma.$disconnect();
+  } catch (error) {
+    logger.error('❌ Database connection failed:', error);
+    throw error;
+  }
+
+  const server = app.listen(PORT, '0.0.0.0', () => {
     logger.info(`✅ Server is running on http://0.0.0.0:${PORT}`);
+    logger.info(`✅ Health check: http://0.0.0.0:${PORT}/`);
     logger.info(`✅ Cron endpoint: http://0.0.0.0:${PORT}/api/cron/poll-drive`);
+    logger.info('🎉 Application is ready to accept connections');
+  });
+
+  // Handle server errors
+  server.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EADDRINUSE') {
+      logger.error(`❌ Port ${PORT} is already in use`);
+    } else {
+      logger.error('❌ Server error:', error);
+    }
+    process.exit(1);
   });
 
   logger.info('Application initialized successfully');
