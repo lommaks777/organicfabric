@@ -10,7 +10,7 @@ import { logger } from './core/logger.js';
 import pollDriveHandler from './api/cron/poll-drive.js';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = parseInt(process.env.PORT || '3000', 10);
 
 app.use(express.json());
 
@@ -45,9 +45,9 @@ app.get('/api/cron/poll-drive', async (req: Request, res: Response) => {
 async function main() {
   logger.info('Application starting...');
 
-  app.listen(PORT, () => {
-    logger.info(`Server is running on http://localhost:${PORT}`);
-    logger.info(`Cron endpoint: http://localhost:${PORT}/api/cron/poll-drive`);
+  app.listen(PORT, '0.0.0.0', () => {
+    logger.info(`Server is running on http://0.0.0.0:${PORT}`);
+    logger.info(`Cron endpoint: http://0.0.0.0:${PORT}/api/cron/poll-drive`);
   });
 
   logger.info('Application initialized successfully');
