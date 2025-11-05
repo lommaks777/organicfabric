@@ -63,6 +63,7 @@ async function main() {
   // Test database connection before starting server
   try {
     const { prisma } = await import('./db/prisma.js');
+    logger.info('Testing database connection...');
     await prisma.$connect();
     logger.info('✅ Database connection successful');
     await prisma.$disconnect();

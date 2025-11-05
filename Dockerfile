@@ -50,5 +50,5 @@ RUN npx prisma generate
 # Expose port (Railway will set PORT env var)
 EXPOSE 3000
 
-# Start command - run migrations first, then start app
-CMD npx prisma migrate deploy && node dist/index.js
+# Start command - migrations already done during build
+CMD ["node", "dist/index.js"]
