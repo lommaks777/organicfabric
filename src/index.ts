@@ -3,11 +3,20 @@
  * This file serves as the entry point for the application
  */
 
+console.log('🚀 Starting application - index.ts loaded');
+
 import 'dotenv/config';
+console.log('✅ dotenv loaded');
+
 import express from 'express';
+console.log('✅ express loaded');
+
 import type { Request, Response } from 'express';
 import { logger } from './core/logger.js';
+console.log('✅ logger loaded');
+
 import pollDriveHandler from './api/cron/poll-drive.js';
+console.log('✅ pollDriveHandler loaded');
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
