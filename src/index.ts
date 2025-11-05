@@ -23,6 +23,13 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 
 app.use(express.json());
 
+// Logging middleware
+app.use((req: Request, _res: Response, next) => {
+  logger.info(`Incoming request: ${req.method} ${req.url}`);
+  logger.info(`Headers: ${JSON.stringify(req.headers)}`);
+  next();
+});
+
 // Health check endpoint
 app.get('/', (_req: Request, res: Response) => {
   res.json({ status: 'ok', message: 'OrganicFabric API is running' });
