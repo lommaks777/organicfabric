@@ -71,12 +71,16 @@ export default async function handler(
     await state.updateJobStatus(job.id, 'CLAIMED');
     logger.info(`Created and claimed Job ID: ${job.id}`);
 
-    // 3. Execute job through pipeline
-    await runJob(job.id);
+    // 3. Execute job through pipeline asynchronously (fire-and-forget)
+    // Don't await - let it run in background to avoid cron timeout
+    runJob(job.id).catch(error => {
+      logger.error(`[Job ${job.id}] Background job execution failed:`, error);
+    });
 
+    // Immediately respond to cron service to avoid timeout
     res.status(200).json({ 
       success: true, 
-      message: `Job ${job.id} for file ${originalName} started and finished.`, 
+      message: `Job ${job.id} for file ${originalName} started in background.`, 
       jobId: job.id 
     });
 
