@@ -58,7 +58,7 @@ function getVertexAIClient(): { client: PredictionServiceClient; projectId: stri
  * Generate images from text prompts using Vertex AI Imagen
  */
 export async function generateImages(params: GenerateImagesParams): Promise<GeneratedImage[]> {
-  const { prompts, model = 'imagegeneration@006', aspectRatio = '1:1' } = params;
+  const { prompts, model = 'imagen-3.0-generate-001', aspectRatio = '1:1' } = params;
   
   logger.info(`Generating ${prompts.length} images with Vertex AI Imagen`);
   
